@@ -8,7 +8,7 @@ const BateriaSchema = new mongoose.Schema({
   horaInicio: { type: Date, default: null },
   horaFim: { type: Date, default: null },
   // NOVO CAMPO: Vinculação com o Evento correspondente
-  evento: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Evento', required: true }]
+  evento: { type: mongoose.Schema.Types.ObjectId, ref: 'Evento', required: true }
 }, { timestamps: true });
 
 export default mongoose.models.Bateria || mongoose.model('Bateria', BateriaSchema);

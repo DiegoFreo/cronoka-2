@@ -1,4 +1,4 @@
-import { Card, CardContent } from "@/app/components/card";
+import { Card, CardContent } from "@/app/components/Card";
 import { UserPen, Users, Layers, Flag } from "lucide-react";
 
 export default function SecretariaPage() {

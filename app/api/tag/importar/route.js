@@ -4,11 +4,13 @@ import Tag from "../../../model/tag";
 import * as XLSX from "xlsx";
 
 // Força o Next.js a não processar o body automaticamente, liberando o FormData
+/*
 export const config = {
   api: {
     bodyParser: false,
   },
 };
+*/
 
 export async function POST(request) {
   try {

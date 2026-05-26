@@ -47,7 +47,7 @@ const menuItems = [
   { id: 7, icon: Tag, label: 'TAGs / Chips', href: '/admin/tags' },
   { id: 8, icon: BarChart3, label: 'Relatórios', href: '/relatorios' },
   { id: 9, icon: ShieldCheck, label: 'Licenças', href: '/admin/licencas' },
-  { id: 10, icon: Settings, label: 'Configurações', href: '/admin/configuracoes' },
+  { id: 10, icon: Settings, label: 'Configurações', href: '/admin/antenas' },
   { id: 11, icon: Play, label: 'Iniciar Corrida', href: '/corrida', isCritical: true },
 ];
 
@@ -69,7 +69,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       case 'TAGs / Chips': return 'Controle e atribuição dos transponders RFID de telemetria.';
       case 'Relatórios': return 'Exportação de resultados oficiais e planilhas da federação.';
       case 'Licenças': return 'Validação de permissões e alvarás dos pilotos ativos.';
-      case 'Configurações': return 'Ajustes globais do sistema de cronometragem e infraestrutura.';
+      case 'Configurações': return 'Ajustes das antens de leitura.';
       case 'Iniciar Corrida': return 'Painel de controle em tempo real da antena de pista.';
       default: return 'Gerenciamento e configurações do sistema.';
     }
