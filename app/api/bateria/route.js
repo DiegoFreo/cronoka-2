@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import conectDB from "@/app/lib/mongodb";
 import Bateria from "@/app/model/bateria";
+import Evento from "@/app/model/evento";
 
 // 1. LISTAR BATERIAS (Trazendo dados de categorias E do evento)
 export async function GET() {
@@ -8,6 +9,7 @@ export async function GET() {
     await conectDB();
     const baterias = await Bateria.find()
       .populate('categorias')
+      .populate('evento')
       .sort({ ordem: 1 });
     return NextResponse.json(baterias);
   } catch (error) {
