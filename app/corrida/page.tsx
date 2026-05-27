@@ -25,6 +25,18 @@ export default function CronometragemPage() {
   const [bateriaSelecionada, setBateriaSelecionada] = useState<string>('');
   const [loadingPilotos, setLoadingPilotos] = useState(false);
 
+  // Estados de Modal e Categorias para Cadastro Rápido
+  const [modalAberto, setModalAberto] = useState(false);
+  const [categoriasBateria, setCategoriasBateria] = useState<{_id: string, nome: string}[]>([]); // Categorias da prova atual
+
+  // Campos do formulário rápido
+  const [novoNome, setNovoNome] = useState('');
+  const [novoNumero, setNovoNumero] = useState('');
+  const [novaTag, setNovaTag] = useState('');
+  // 🔥 ALTERADO: Agora armazena um array com os IDs das categorias marcadas
+  const [categoriasSelecionadas, setCategoriasSelecionadas] = useState<string[]>([]);
+  const [cadastrando, setCadastrando] = useState(false);
+
   // Estados do Cronômetro Principal
   const [tempoDecorrido, setTempoDecorrido] = useState(0);
   const [cronometroAtivo, setCronometroAtivo] = useState(false);
@@ -37,68 +49,85 @@ export default function CronometragemPage() {
   const timerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 1. CARREGA AS BATERIAS DISPONÍVEIS AO ABRIR A TELA
-useEffect(() => {
-  async function carregarBaterias() {
-    try {
-      const res = await fetch('/api/bateria'); 
-      const dados = await res.json();
-      if (res.ok && Array.isArray(dados)) {
-        setListaBaterias(dados);
-        // Pré-seleciona a primeira bateria encontrada se houver
-        if (dados.length > 0) {
-          const primeiroId = dados[0]._id || dados[0].id;
-          setBateriaSelecionada(primeiroId);
+  useEffect(() => {
+    async function carregarBaterias() {
+      try {
+        const res = await fetch('/api/bateria'); 
+        const dados = await res.json();
+        if (res.ok && Array.isArray(dados)) {
+          setListaBaterias(dados);
+          if (dados.length > 0) {
+            const primeiroId = dados[0]._id || dados[0].id;
+            setBateriaSelecionada(primeiroId);
+          }
         }
+      } catch (err) {
+        console.error("Erro ao carregar lista de baterias no seletor:", err);
       }
-    } catch (err) {
-      console.error("Erro ao carregar lista de baterias no seletor:", err);
     }
-  }
-  carregarBaterias();
-}, []);
+    carregarBaterias();
+  }, []);
 
-// 2. BUSCA OS PILOTOS ATUALIZADOS SEMPRE QUE A BATERIA SELECIONADA MUDAR
-useEffect(() => {
-  if (!bateriaSelecionada) {
-    setPilotos([]);
-    return;
-  }
-
-  async function buscarPilotosDaBateria() {
-    setLoadingPilotos(true);
-    setTempoDecorrido(0); // Zera o cronômetro para evitar carregar tempos da prova anterior
-    setCronometroAtivo(false);
-    
-    try {
-      // Consome a rota dinâmica que criamos no Passo 1
-      const res = await fetch(`/api/bateria/${bateriaSelecionada}/pilotos`);
-      const dados = await res.json();
-      
-      if (res.ok && Array.isArray(dados)) {
-        const pilotosFormatados: PilotoCorrida[] = dados.map((p: any) => ({
-          id: p._id,
-          numero: p.numero,
-          nome: p.nome,
-          tagRfid: p.tagRfid,
-          categoria: p.categoriaNome,
-          voltas: [],
-          tempoUltimaPassagem: 0,
-          statusPista: 'NORMAL'
-        }));
-        setPilotos(pilotosFormatados);
-      } else {
-        setPilotos([]);
-      }
-    } catch (err) {
-      console.error("Erro ao carregar pilotos do grid:", err);
+  // 2. BUSCA OS PILOTOS ATUALIZADOS SEMPRE QUE A BATERIA SELECIONADA MUDAR
+  useEffect(() => {
+    if (!bateriaSelecionada) {
       setPilotos([]);
-    } finally {
-      setLoadingPilotos(false);
+      setCategoriasBateria([]); 
+      return;
     }
-  }
 
-  buscarPilotosDaBateria();
-}, [bateriaSelecionada]);
+    async function buscarPilotosDaBateria() {
+      setLoadingPilotos(true);
+      setTempoDecorrido(0); 
+      setCronometroAtivo(false);
+      
+      try {
+        const res = await fetch(`/api/bateria/${bateriaSelecionada}/pilotos`);
+        const dados = await res.json();
+        
+        if (res.ok && Array.isArray(dados)) {
+          const pilotosFormatados: PilotoCorrida[] = dados.map((p: any) => ({
+            id: p._id,
+            numero: p.numero,
+            nome: p.nome,
+            tagRfid: p.tagRfid,
+            categoria: p.categoriaNome,
+            voltas: [],
+            tempoUltimaPassagem: 0,
+            statusPista: 'NORMAL'
+          }));
+          setPilotos(pilotosFormatados);
+        } else {
+          setPilotos([]);
+        }
+
+        const resBaterias = await fetch('/api/bateria');
+        const listaBaterias = await resBaterias.json();
+
+        if (resBaterias.ok && Array.isArray(listaBaterias)) {
+          const bateriaAtiva = listaBaterias.find((b: any) => b._id === bateriaSelecionada);
+          
+          if (bateriaAtiva && Array.isArray(bateriaAtiva.categorias)) {
+            const categoriasMapeadas = bateriaAtiva.categorias.map((cat: any) => ({
+              _id: cat._id,
+              nome: cat.nome
+            }));
+            
+            setCategoriasBateria(categoriasMapeadas);
+            // 🔥 Limpa seleções anteriores ao mudar de bateria
+            setCategoriasSelecionadas([]);
+          }
+        }
+      } catch (err) {
+        console.error("Erro ao carregar pilotos do grid:", err);
+        setPilotos([]);
+      } finally {
+        setLoadingPilotos(false);
+      }
+    }
+
+    buscarPilotosDaBateria();
+  }, [bateriaSelecionada]);
 
   // 3. GERENCIADOR DO CRONÔMETRO
   useEffect(() => {
@@ -113,7 +142,7 @@ useEffect(() => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [cronometroAtivo]);
 
-  // 4. MONITOR DE STATUS PREDITIVO (PISCA LARANJA / VERMELHO)
+  // 4. MONITOR DE STATUS PREDITIVO
   useEffect(() => {
     const interval = setInterval(() => {
       setPilotos(prevPilotos => 
@@ -124,10 +153,10 @@ useEffect(() => {
           const tempoDesdeUltimaPassagem = Date.now() - piloto.tempoUltimaPassagem;
 
           if (tempoDesdeUltimaPassagem >= melhorVolta - 10000 && tempoDesdeUltimaPassagem < melhorVolta + 15000) {
-            return { ...piloto, statusPista: 'PREVISTO' }; // Alerta Laranja (Chegando)
+            return { ...piloto, statusPista: 'PREVISTO' }; 
           }
           if (tempoDesdeUltimaPassagem >= melhorVolta + 15000) {
-            return { ...piloto, statusPista: 'ATRASADO' }; // Alerta Vermelho (Atrasado)
+            return { ...piloto, statusPista: 'ATRASADO' }; 
           }
           return { ...piloto, statusPista: 'NORMAL' };
         })
@@ -137,49 +166,40 @@ useEffect(() => {
     return () => clearInterval(interval);
   }, [tempoDecorrido]);
 
-  /* Lógica de computar voltas
-  const registrarVoltaPiloto = (numeroPiloto: number, origem: 'RFID' | 'MANUAL' = 'MANUAL') => {
-    if (!cronometroAtivo) return;
-
-    setPilotos(prevPilotos => 
-      prevPilotos.map(piloto => {
-        if (piloto.numero === numeroPiloto || piloto.tagRfid === numeroPiloto.toString()) {
-          const agora = Date.now();
-          const tempoVolta = piloto.tempoUltimaPassagem === 0 ? tempoDecorrido : agora - piloto.tempoUltimaPassagem;
-
-          return {
-            ...piloto,
-            voltas: [...piloto.voltas, tempoVolta],
-            tempoUltimaPassagem: agora,
-            statusPista: 'NORMAL'
-          };
-        }
-        return piloto;
-      })
-    );
-    setInputManual('');
-  };*/
-
-  const registrarVoltaPiloto = (valorInserido: string, origem: 'RFID' | 'MANUAL' = 'MANUAL') => {
-  // Se o cronômetro não estiver ativo, ignora a digitação
+ const registrarVoltaPiloto = (valorInserido: string, origem: 'RFID' | 'MANUAL' = 'MANUAL') => {
   if (!cronometroAtivo) return;
 
   const termoBusca = valorInserido.trim();
   if (!termoBusca) return;
 
-  // Atualiza o estado dos pilotos garantindo o escopo correto da função de seta
   setPilotos((prevPilotos) => {
     let pilotoEncontrado = false;
 
     const gridAtualizado = prevPilotos.map((piloto) => {
+      // 1. Comparação direta por número da moto
       const numeroMotoBate = String(piloto.numero).trim() === termoBusca;
-      const tagRfidBate = piloto.tagRfid && String(piloto.tagRfid).trim() === termoBusca;
+
+      // 2. Comparação por Chip (Aceita código completo ou os 3 últimos caracteres)
+      let tagRfidBate = false;
+      if (piloto.tagRfid) {
+        const tagBancoCompleta = String(piloto.tagRfid).trim();
+        // Pega apenas os 3 últimos caracteres salvos no banco (ex: "045")
+        const tresUltimosBanco = tagBancoCompleta.slice(-3); 
+        
+        // Remove zeros à esquerda para o caso de você digitar "45" em vez de "045"
+        const termoBuscaLimpo = parseInt(termoBusca, 10).toString();
+        const tresUltimosBancoLimpo = parseInt(tresUltimosBanco, 10).toString();
+
+        tagRfidBate = 
+          tagBancoCompleta === termoBusca ||                 // Se a leitora mandou o código cheio
+          tresUltimosBanco === termoBusca ||                 // Se digitou exatamente os 3 últimos (ex: 045)
+          tresUltimosBancoLimpo === termoBuscaLimpo;         // Se bateu o número puro convertido (ex: 45 = 45)
+      }
 
       if (numeroMotoBate || tagRfidBate) {
         pilotoEncontrado = true;
         const agora = Date.now();
         
-        // Calcula tempo da volta
         const tempoVolta = piloto.tempoUltimaPassagem === 0 
           ? tempoDecorrido 
           : agora - piloto.tempoUltimaPassagem;
@@ -201,47 +221,44 @@ useEffect(() => {
     return gridAtualizado;
   });
 
-  // Limpa o input após computar
   setInputManual('');
 };
 
-const finalizarCorridaOficial = async () => {
-  if (pilotos.length === 0) return;
-  if (!confirm("Deseja realmente encerrar a cronometragem e salvar o resultado oficial desta bateria?")) return;
+  const finalizarCorridaOficial = async () => {
+    if (pilotos.length === 0) return;
+    if (!confirm("Deseja realmente encerrar a cronometragem e salvar o resultado oficial desta bateria?")) return;
 
-  setCronometroAtivo(false); // Garante que para o tempo
+    setCronometroAtivo(false);
 
-  try {
-    const resposta = await fetch('/api/corrida/salvar', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        bateriaId: bateriaSelecionada,
-        gridPilotos: pilotos.map(p => ({
-          id: p.id,
-          numero: p.numero,
-          nome: p.nome,
-          voltas: p.voltas // Envia o array de milissegundos brutos
-        })),
-        tempoTotalCorrida: tempoDecorrido
-      })
-    });
+    try {
+      const resposta = await fetch('/api/corrida/salvar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          bateriaId: bateriaSelecionada,
+          gridPilotos: pilotos.map(p => ({
+            id: p.id,
+            numero: p.numero,
+            nome: p.nome,
+            voltas: p.voltas 
+          })),
+          tempoTotalCorrida: tempoDecorrido
+        })
+      });
 
-    const resultado = await resposta.json();
+      const resultado = await resposta.json();
 
-    if (resposta.ok) {
-      alert("Corrida finalizada com sucesso! Redirecionando para os relatórios...");
-      // Opcional: Redirecionar direto para a página de relatórios que criamos
-      window.location.href = '/relatorios';
-    } else {
-      alert("Erro ao salvar corrida: " + resultado.error);
+      if (resposta.ok) {
+        alert("Corrida finalizada com sucesso! Redirecionando para os relatórios...");
+        window.location.href = '/relatorios';
+      } else {
+        alert("Erro ao salvar corrida: " + resultado.error);
+      }
+    } catch (err) {
+      console.error("Erro na requisição de salvamento:", err);
+      alert("Erro interno ao salvar os dados da prova.");
     }
-  } catch (err) {
-    console.error("Erro na requisição de salvamento:", err);
-    alert("Erro interno ao salvar os dados da prova.");
-  }
-};
-
+  };
 
   const excluirPrimeiraVolta = (pilotoId: string) => {
     if (!confirm("Deseja realmente remover a primeira volta deste piloto?")) return;
@@ -269,12 +286,58 @@ const finalizarCorridaOficial = async () => {
     return `${minutos.toString().padStart(2, '0')}:${segundos.toString().padStart(2, '0')}.${milis.toString().padStart(3, '0')}`;
   };
 
+  // 🔥 ALTERADO: Função auxiliar para marcar/desmarcar os itens do checkbox
+  const toggleCategoria = (id: string) => {
+    setCategoriasSelecionadas(prev => 
+      prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]
+    );
+  };
+
+  // 🔥 ALTERADO: Envia o array "categoriasIds" para a API atualizada
+  const lidarComCadastroRapido = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (categoriasSelecionadas.length === 0) return alert("Selecione ao menos uma categoria para o piloto!");
+    
+    setCadastrando(true);
+    try {
+      const res = await fetch('/api/bateria/adicionar-piloto', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nome: novoNome,
+          numero: novoNumero,
+          tag: novaTag,
+          categoriasIds: categoriasSelecionadas 
+        })
+      });
+
+      const dados = await res.json();
+
+      if (res.ok && dados.success) {
+        setPilotos(prevGrid => [...prevGrid, dados.piloto]);
+        
+        setNovoNome('');
+        setNovoNumero('');
+        setNovaTag('');
+        setCategoriasSelecionadas([]); 
+        setModalAberto(false);
+        alert(`${dados.piloto.nome} inserido no grid com sucesso!`);
+      } else {
+        alert("Erro ao inserir piloto: " + dados.error);
+      }
+    } catch (err) {
+      console.error("Erro no cadastro rápido:", err);
+    } finally {
+      setCadastrando(false);
+    }
+  };
+
   const formatarSegundos = (ms: number) => (ms / 1000).toFixed(3) + 's';
 
   return (
-    <div className="space-y-6 font-sans bg-[#070707] min-h-screen text-white">
+    <div className="space-y-6 font-sans bg-[#070707] min-h-screen text-white p-6">
       
-      {/* SELETOR DE BATERIA ATIVA (PREMIUM DARK) */}
+      {/* SELETOR DE BATERIA ATIVA */}
       <div className="bg-[#111] border border-gray-800 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="flex items-center gap-3">
           <Layers className="text-red-500 shrink-0" size={22} />
@@ -285,18 +348,18 @@ const finalizarCorridaOficial = async () => {
         </div>
 
         <div className="w-full sm:w-72">
-            <select
-                value={bateriaSelecionada}
-                onChange={(e) => setBateriaSelecionada(e.target.value)}
-                className="w-full bg-black border border-gray-800 hover:border-gray-700 rounded px-3 py-2 text-sm text-white font-semibold outline-none focus:border-red-600 cursor-pointer transition-colors"
-                >
-                <option value="" disabled>-- Escolha a Bateria --</option>
-                {listaBaterias.map((bat: any) => (
-                    <option key={bat._id || bat.id} value={bat._id || bat.id} className="bg-[#111] text-white">
-                    {bat.nome}
-                    </option>
-                ))}
-            </select>
+          <select
+            value={bateriaSelecionada}
+            onChange={(e) => setBateriaSelecionada(e.target.value)}
+            className="w-full bg-black border border-gray-800 hover:border-gray-700 rounded px-3 py-2 text-sm text-white font-semibold outline-none focus:border-red-600 cursor-pointer transition-colors"
+          >
+            <option value="" disabled>-- Escolha a Bateria --</option>
+            {listaBaterias.map((bat: any) => (
+              <option key={bat._id || bat.id} value={bat._id || bat.id} className="bg-[#111] text-white">
+                {bat.nome}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 
@@ -317,31 +380,39 @@ const finalizarCorridaOficial = async () => {
         </div>
 
         <div className="flex justify-end gap-3">
-            <button 
-                onClick={() => setCronometroAtivo(!cronometroAtivo)}
-                disabled={pilotos.length === 0}
-                className={`flex items-center gap-2 px-5 py-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-lg disabled:opacity-20 disabled:pointer-events-none ${
-                cronometroAtivo ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
-                }`}
-            >
-                {cronometroAtivo ? <Pause size={16} /> : <Play size={16} />}
-                {cronometroAtivo ? 'Pausar' : 'Dar Largada'}
-            </button>
-            {/* NOVO BOTÃO: SALVAR E FINALIZAR */}
-            <button
-                onClick={finalizarCorridaOficial}
-                disabled={pilotos.length === 0 || tempoDecorrido === 0}
-                className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-lg text-xs uppercase tracking-wider disabled:opacity-20 transition-all shadow-lg"
-            >
-                Finalizar Prova
-            </button>
+          <button 
+            onClick={() => setCronometroAtivo(!cronometroAtivo)}
+            disabled={pilotos.length === 0}
+            className={`flex items-center gap-2 px-5 py-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-lg disabled:opacity-20 disabled:pointer-events-none ${
+              cronometroAtivo ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
+            }`}
+          >
+            {cronometroAtivo ? <Pause size={16} /> : <Play size={16} />}
+            {cronometroAtivo ? 'Pausar' : 'Dar Largada'}
+          </button>
           
-            <button 
-                onClick={() => { if(confirm('Zerar cronômetro atual?')) setTempoDecorrido(0); setCronometroAtivo(false); }}
-                className="p-3 bg-gray-900 border border-gray-800 hover:text-red-500 rounded-lg text-gray-400 transition-colors"
-            >
-                <RotateCcw size={16} />
-            </button>
+          <button
+            onClick={finalizarCorridaOficial}
+            disabled={pilotos.length === 0 || tempoDecorrido === 0}
+            className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-lg text-xs uppercase tracking-wider disabled:opacity-20 transition-all shadow-lg"
+          >
+            Finalizar Prova
+          </button>
+          
+          <button
+            onClick={() => setModalAberto(true)}
+            disabled={!bateriaSelecionada}
+            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white font-bold px-4 py-2 rounded text-xs uppercase tracking-wider transition-colors"
+          >
+            + Piloto Rápido
+          </button>
+        
+          <button 
+            onClick={() => { if(confirm('Zerar cronômetro atual?')) setTempoDecorrido(0); setCronometroAtivo(false); }}
+            className="p-3 bg-gray-900 border border-gray-800 hover:text-red-500 rounded-lg text-gray-400 transition-colors"
+          >
+            <RotateCcw size={16} />
+          </button>
         </div>
       </div>
 
@@ -461,6 +532,96 @@ const finalizarCorridaOficial = async () => {
                 })}
               </tbody>
             </table>
+          </div>
+        </div>
+      )}
+
+      {/* 🔥 MODAL SUSPENSO COM SELEÇÃO MULTIPLA DE CHECKBOX */}
+      {modalAberto && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="bg-[#111] border border-gray-800 rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
+            <div className="border-b border-gray-800 pb-2">
+              <h3 className="text-sm font-black uppercase tracking-wider text-white">Inscrição Rápida de Pista</h3>
+              <p className="text-[10px] text-gray-400">O piloto entrará imediatamente no grid de telemetria ativo.</p>
+            </div>
+
+            <form onSubmit={lidarComCadastroRapido} className="space-y-4 text-xs">
+              <div>
+                <label className="block text-gray-400 uppercase font-bold mb-1">Nome Completo</label>
+                <input
+                  type="text" required value={novoNome} onChange={e => setNovoNome(e.target.value)}
+                  className="w-full bg-black border border-gray-800 rounded px-3 py-2 outline-none focus:border-blue-500 uppercase text-white font-semibold"
+                  placeholder="Ex: JORGE SILVA"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 gap-3">
+                <div>
+                  <label className="block text-gray-400 uppercase font-bold mb-1">Nº da Moto</label>
+                  <input
+                    type="number" required value={novoNumero} onChange={e => setNovoNumero(e.target.value)}
+                    className="w-full bg-black border border-gray-800 rounded px-3 py-2 outline-none focus:border-blue-500 text-center font-mono font-bold text-white"
+                    placeholder="Ex: 45"
+                  />
+                </div>
+
+                {/* 🔥 SELETOR EM CHECKBOX COMPACTO */}
+                <div>
+                  <label className="block text-gray-400 uppercase font-bold mb-1">
+                    Categorias <span className="text-blue-500 text-[10px]">(Marque todas as que ele for correr)</span>
+                  </label>
+                  <div className="bg-black border border-gray-800 rounded p-3 max-h-36 overflow-y-auto space-y-1.5">
+                    {categoriasBateria.length === 0 ? (
+                      <span className="text-gray-600 text-[11px]">Nenhuma categoria vinculada a esta bateria.</span>
+                    ) : (
+                      categoriasBateria.map((cat) => {
+                        const isChecked = categoriasSelecionadas.includes(cat._id);
+                        return (
+                          <label 
+                            key={cat._id} 
+                            className={`flex items-center gap-3 p-2 rounded border cursor-pointer select-none transition-colors text-[11px] font-bold ${
+                              isChecked ? 'border-blue-600 bg-blue-950/20 text-white' : 'border-gray-900 bg-gray-900/40 text-gray-400 hover:bg-gray-900'
+                            }`}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleCategoria(cat._id)}
+                              className="w-4 h-4 rounded accent-blue-600 cursor-pointer"
+                            />
+                            <span className="uppercase">{cat.nome}</span>
+                          </label>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-gray-400 uppercase font-bold mb-1">Tag RFID / Transponder (Opcional)</label>
+                <input
+                  type="text" value={novaTag} onChange={e => setNovaTag(e.target.value)}
+                  className="w-full bg-black border border-gray-800 rounded px-3 py-2 outline-none focus:border-blue-500 font-mono text-center text-blue-400 font-bold"
+                  placeholder="Aproxime o chip ou digite a ID"
+                />
+              </div>
+
+              <div className="flex justify-end gap-2 pt-2 border-t border-gray-800">
+                <button
+                  type="button" onClick={() => { setModalAberto(false); setCategoriasSelecionadas([]); }}
+                  className="px-4 py-2 bg-gray-900 border border-gray-800 text-gray-400 hover:text-white rounded uppercase font-bold tracking-wider text-[10px]"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit" disabled={cadastrando}
+                  className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded uppercase font-bold tracking-wider text-[10px] disabled:opacity-40"
+                >
+                  {cadastrando ? 'Inserindo...' : 'Inserir na Prova'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -1,57 +1,115 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Radio, Check, RefreshCw, Cpu, Activity, Database, AlertCircle } from 'lucide-react';
 
 export default function AntenasPage() {
   const [baterias, setBaterias] = useState<any>([]);
   const [bateriaSelecionada, setBateriaSelecionada] = useState('');
   
-  // Estados do Hardware
-  const [ipLeitor, setIpLeitor] = useState('192.168.1.100');
+  // Estados do Hardware - 🔥 Atualizado para o IP correto da sua rede
+  const [ipLeitor, setIpLeitor] = useState('192.168.1.121');
   const [portaLeitor, setPortaLeitor] = useState('5084');
-  const [potenciaDbm, setPotenciaDbm] = useState('30'); // Potência máxima Zebra geralmente é 30dBm
+  const [potenciaDbm, setPotenciaDbm] = useState('30'); 
   const [antenas, setAntenas] = useState({ ant1: true, ant2: true, ant3: false, ant4: false });
   
-  // Status de Conexão com o Servidor de Pista (WebSocket)
+  // Status de Conexão Real (WebSocket)
   const [statusConexao, setStatusConexao] = useState<'DISCONNECTED' | 'CONNECTING' | 'CONNECTED'>('DISCONNECTED');
   const [logsLeitura, setLogsLeitura] = useState<{ time: string; tag: string; antena: number }[]>([]);
   const [salvando, setSalvando] = useState(false);
 
+  // Referência para guardar a instância do WebSocket e evitar conexões duplicadas
+  const socketRef = useRef<WebSocket | null>(null);
+
   useEffect(() => {
     // Carrega as baterias para vincular o hardware
     async function carregarBaterias() {
-      const res = await fetch('/api/baterias');
-      const dados = await res.json();
-      if (res.ok && Array.isArray(dados)) {
-        setBaterias(dados);
-        if (dados.length > 0) setBateriaSelecionada(dados[0]._id);
+      try {
+        const res = await fetch('/api/bateria'); // Ajustado para baterias no singular baseado no seu projeto
+        const dados = await res.json();
+        if (res.ok && Array.isArray(dados)) {
+          setBaterias(dados);
+          if (dados.length > 0) setBateriaSelecionada(dados[0]._id || dados[0].id);
+        }
+      } catch (err) {
+        console.error("Erro ao carregar baterias:", err);
       }
     }
     carregarBaterias();
+
+    // Cleanup: Garante que fecha a conexão se o usuário mudar de página
+    return () => {
+      if (socketRef.current) {
+        socketRef.current.close();
+      }
+    };
   }, []);
 
-  // SIMULAÇÃO DE CONEXÃO COM O LEITOR LOCAL (A ser substituído pelo WebSocket real)
+  // 🔥 INTEGRAÇÃO REAL: Conecta ao servidor local via WebSocket
   const conectarAoLeitorLocal = () => {
+    if (socketRef.current) socketRef.current.close();
+
     setStatusConexao('CONNECTING');
-    setTimeout(() => {
+
+    // Endereço do seu bridge.js (Ex: se ele roda na porta 8080 ou 4000 do Node)
+    // Se o bridge roda na mesma máquina, usamos localhost
+    const WS_URL = 'ws://localhost:8080'; 
+    
+    const ws = new WebSocket(WS_URL);
+    socketRef.current = ws;
+
+    ws.onopen = () => {
       setStatusConexao('CONNECTED');
-      // Injeta um log fake a cada poucos segundos apenas para ver o layout funcionando
-      const interval = setInterval(() => {
-        setLogsLeitura(prev => [
-          { 
-            time: new Date().toLocaleTimeString('pt-BR'), 
-            tag: `E280113060005${Math.floor(100 + Math.random() * 900)}`, 
-            antena: Math.random() > 0.5 ? 1 : 2 
-          },
-          ...prev.slice(0, 9) // Mantém apenas os últimos 10
-        ]);
-      }, 4000);
-      (window as any)._hardwareInterval = interval;
-    }, 1500);
+      console.log('Conectado ao bridge de telemetria!');
+      
+      // Envia os parâmetros de configuração (potência, antenas) assim que conecta
+      ws.send(JSON.stringify({
+        action: 'CONFIGURE',
+        ip: ipLeitor,
+        porta: portaLeitor,
+        potencia: potenciaDbm,
+        antenas
+      }));
+    };
+
+    ws.onmessage = (event) => {
+      try {
+        const dadosRfid = JSON.parse(event.data);
+        
+        // Espera receber um evento do tipo 'TAG_READ' do seu bridge
+        if (dadosRfid.event === 'TAG_READ') {
+          setLogsLeitura(prev => [
+            { 
+              time: new Date().toLocaleTimeString('pt-BR'), 
+              tag: dadosRfid.tagId, // Código EPC completo (Ex: E28011...)
+              antena: dadosRfid.antena || 1
+            },
+            ...prev.slice(0, 14) // Mantém os últimos 15 logs na tela
+          ]);
+
+          // 💡 DICA: Se a tela de cronometragem estiver aberta em outra aba,
+          // você pode disparar um CustomEvent ou salvar as passagens direto na API aqui!
+        }
+      } catch (err) {
+        console.error("Erro ao processar dados da leitora:", err);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('Erro no WebSocket:', error);
+      setStatusConexao('DISCONNECTED');
+    };
+
+    ws.onclose = () => {
+      setStatusConexao('DISCONNECTED');
+      console.log('Conexão com o bridge encerrada.');
+    };
   };
 
   const desconectarLeitor = () => {
-    if ((window as any)._hardwareInterval) clearInterval((window as any)._hardwareInterval);
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
     setStatusConexao('DISCONNECTED');
   };
 
@@ -70,9 +128,21 @@ export default function AntenasPage() {
           antenasAtivas: antenas
         })
       });
-      if (res.ok) alert('Parâmetros de hardware sincronizados no banco de dados!');
+      if (res.ok) {
+        alert('Parâmetros de hardware sincronizados no banco de dados!');
+        
+        // Se estiver conectado, envia as novas configurações a quente para o bridge
+        if (statusConexao === 'CONNECTED' && socketRef.current) {
+          socketRef.current.send(JSON.stringify({
+            action: 'RECONFIGURE',
+            potencia: potenciaDbm,
+            antenas
+          }));
+        }
+      }
     } catch (err) {
       console.error(err);
+      alert('Erro ao salvar no banco.');
     } finally {
       setSalvando(false);
     }
@@ -92,14 +162,14 @@ export default function AntenasPage() {
 
         {/* STATUS DE CONEXÃO EM TEMPO REAL */}
         <div className="flex items-center gap-3 bg-[#111] border border-gray-800 px-4 py-2 rounded-xl">
-          <div className={`w-3 h-3 rounded-full animate-pulse ${
-            statusConexao === 'CONNECTED' ? 'bg-green-500' : statusConexao === 'CONNECTING' ? 'bg-amber-500' : 'bg-red-500'
+          <div className={`w-3 h-3 rounded-full ${
+            statusConexao === 'CONNECTED' ? 'bg-green-500 animate-pulse' : statusConexao === 'CONNECTING' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
           }`} />
           <span className="text-xs font-mono font-bold tracking-wider">
             {statusConexao === 'CONNECTED' ? 'LEITOR CONECTADO' : statusConexao === 'CONNECTING' ? 'BUSCANDO SINAL...' : 'LEITOR OFFLINE'}
           </span>
           {statusConexao === 'DISCONNECTED' ? (
-            <button onClick={conectarAoLeitorLocal} className="ml-2 p-1 text-gray-400 hover:text-white"><RefreshCw size={14} /></button>
+            <button onClick={conectarAoLeitorLocal} className="ml-2 p-1 text-gray-400 hover:text-white transition-colors" title="Conectar ao hardware"><RefreshCw size={14} /></button>
           ) : (
             <button onClick={desconectarLeitor} className="ml-2 text-xs text-red-500 hover:underline">Desconectar</button>
           )}
@@ -122,7 +192,7 @@ export default function AntenasPage() {
                 onChange={e => setBateriaSelecionada(e.target.value)}
                 className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-xs font-bold outline-none focus:border-red-600 text-white"
               >
-                {baterias.map((b: any) => <option key={b._id} value={b._id}>{b.nome}</option>)}
+                {baterias.map((b: any) => <option key={b._id || b.id} value={b._id || b.id}>{b.nome}</option>)}
               </select>
             </div>
 
@@ -131,7 +201,7 @@ export default function AntenasPage() {
                 <label className="block text-[11px] uppercase font-bold text-gray-400 mb-1">IP do Leitor</label>
                 <input 
                   type="text" value={ipLeitor} onChange={e => setIpLeitor(e.target.value)}
-                  className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-xs font-mono font-bold outline-none focus:border-red-600 text-center"
+                  className="w-full bg-black border border-gray-800 rounded px-3 py-2 text-xs font-mono font-bold outline-none focus:border-red-600 text-center text-red-400"
                 />
               </div>
               <div>
@@ -152,7 +222,7 @@ export default function AntenasPage() {
                 type="range" min="15" max="30" value={potenciaDbm} onChange={e => setPotenciaDbm(e.target.value)}
                 className="w-full accent-red-600 bg-black cursor-pointer h-1.5 rounded-lg appearance-none mt-2"
               />
-              <span className="text-[9px] text-gray-500 block mt-1">Valores altos aumentam o raio. Use ~20-25dBm para evitar captar o box.</span>
+              <span className="text-[9px] text-gray-500 block mt-1">Use ~20-25dBm na cheia para evitar o sinal vazar para o box dos mecânicos.</span>
             </div>
 
             <button
@@ -167,7 +237,7 @@ export default function AntenasPage() {
         {/* COLUNA 2: SELETOR VISUAL DE ANTENAS */}
         <div className="bg-[#111] border border-gray-800 rounded-xl p-5 space-y-4">
           <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center gap-2">
-            <Radio size={14} /> Mapeamento de Pórtico / Linha de Chegada
+            <Radio size={14} /> Mapeamento do Pórtico / Linha de Chegada
           </h2>
 
           <div className="grid grid-cols-2 gap-4">
@@ -186,7 +256,7 @@ export default function AntenasPage() {
                     ANTENA 0{num}
                   </span>
                   <div className={`p-3 rounded-full ${ativa ? 'bg-red-500/20 text-red-500' : 'bg-gray-900 text-gray-600'}`}>
-                    <Radio size={24} className={ativa && statusConexao === 'CONNECTED' ? 'animate-ping' : ''} />
+                    <Radio size={24} className={ativa && statusConexao === 'CONNECTED' ? 'animate-pulse' : ''} />
                   </div>
                   <span className="text-[11px] font-bold uppercase tracking-wide">
                     {ativa ? 'Monitorando Pista' : 'Desativada'}
@@ -197,25 +267,25 @@ export default function AntenasPage() {
           </div>
         </div>
 
-        {/* COLUNA 3: FEED DE PASSAGENS EM TEMPO REAL (LOGS) */}
+        {/* COLUNA 3: FEED DE PASSAGENS EM TEMPO REAL (LOGS REAIS) */}
         <div className="bg-[#111] border border-gray-800 rounded-xl p-5 space-y-4 flex flex-col h-[400px] lg:h-auto">
           <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
-            <span className="flex items-center gap-2"><Activity size={14} /> Console de Captura Bruta</span>
-            <span className="text-[10px] font-mono bg-black px-2 py-0.5 text-gray-500 rounded">LOGS</span>
+            <span className="flex items-center gap-2"><Activity size={14} /> Console de Captura Real</span>
+            <span className="text-[10px] font-mono bg-black px-2 py-0.5 text-green-500 rounded border border-green-950">LIVE</span>
           </h2>
 
-          <div className="bg-black rounded-lg border border-gray-900 p-3 flex-1 overflow-y-auto font-mono text-[11px] space-y-2 text-gray-400">
+          <div className="bg-black rounded-lg border border-gray-900 p-3 flex-1 overflow-y-auto font-mono text-[11px] space-y-2 text-gray-400 scrollbar-thin">
             {logsLeitura.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center text-gray-600 gap-2">
                 <AlertCircle size={20} />
-                <span>Nenhum sinal RF detectado nas antenas até o momento.</span>
+                <span>Aguardando motos passarem pela linha de chegada...</span>
               </div>
             ) : (
               logsLeitura.map((log, i) => (
-                <div key={i} className="flex justify-between border-b border-gray-900 pb-1.5 last:border-0">
+                <div key={i} className="flex justify-between border-b border-gray-900 pb-1.5 last:border-0 items-center animate-fadeIn">
                   <span className="text-gray-600">[{log.time}]</span>
-                  <span className="text-red-400 font-bold tracking-tight">{log.tag}</span>
-                  <span className="bg-gray-900 text-[10px] px-1 rounded text-gray-400">ANT 0{log.antena}</span>
+                  <span className="text-green-400 font-bold tracking-tight">{log.tag}</span>
+                  <span className="bg-red-950/40 text-red-400 text-[10px] px-1.5 py-0.5 rounded font-bold border border-red-900/30">ANT 0{log.antena}</span>
                 </div>
               ))
             )}
