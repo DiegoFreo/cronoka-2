@@ -1,12 +1,12 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Radio, Check, RefreshCw, Cpu, Activity, Database, AlertCircle } from 'lucide-react';
+import { Radio, RefreshCw, Cpu, Activity, Database, AlertCircle } from 'lucide-react';
 
 export default function AntenasPage() {
   const [baterias, setBaterias] = useState<any>([]);
   const [bateriaSelecionada, setBateriaSelecionada] = useState('');
   
-  // Estados do Hardware - 🔥 Atualizado para o IP correto da sua rede
+  // Estados do Hardware - Alinhado com o IP correto da sua rede
   const [ipLeitor, setIpLeitor] = useState('192.168.1.121');
   const [portaLeitor, setPortaLeitor] = useState('5084');
   const [potenciaDbm, setPotenciaDbm] = useState('30'); 
@@ -17,14 +17,14 @@ export default function AntenasPage() {
   const [logsLeitura, setLogsLeitura] = useState<{ time: string; tag: string; antena: number }[]>([]);
   const [salvando, setSalvando] = useState(false);
 
-  // Referência para guardar a instância do WebSocket e evitar conexões duplicadas
+  // 🔥 CORREÇÃO 1: Referência persistente para gerenciar a instância única do WebSocket
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
     // Carrega as baterias para vincular o hardware
     async function carregarBaterias() {
       try {
-        const res = await fetch('/api/bateria'); // Ajustado para baterias no singular baseado no seu projeto
+        const res = await fetch('/api/bateria'); 
         const dados = await res.json();
         if (res.ok && Array.isArray(dados)) {
           setBaterias(dados);
@@ -36,32 +36,34 @@ export default function AntenasPage() {
     }
     carregarBaterias();
 
-    // Cleanup: Garante que fecha a conexão se o usuário mudar de página
+    // 🔥 CORREÇÃO 2: Cleanup total ao desmontar a página para evitar conexões presas
     return () => {
       if (socketRef.current) {
+        console.log("Fechando conexão antiga do WebSocket antes de sair...");
         socketRef.current.close();
+        socketRef.current = null;
       }
     };
   }, []);
 
-  // 🔥 INTEGRAÇÃO REAL: Conecta ao servidor local via WebSocket
+  // 🔥 INTEGRAÇÃO REAL ATUALIZADA
   const conectarAoLeitorLocal = () => {
-    if (socketRef.current) socketRef.current.close();
+    // Se já houver um socket aberto ou tentando conectar, limpa ele antes
+    if (socketRef.current) {
+      socketRef.current.close();
+    }
 
     setStatusConexao('CONNECTING');
 
-    // Endereço do seu bridge.js (Ex: se ele roda na porta 8080 ou 4000 do Node)
-    // Se o bridge roda na mesma máquina, usamos localhost
     const WS_URL = 'ws://localhost:8080'; 
-    
     const ws = new WebSocket(WS_URL);
     socketRef.current = ws;
 
     ws.onopen = () => {
       setStatusConexao('CONNECTED');
-      console.log('Conectado ao bridge de telemetria!');
+      console.log('✅ Conectado ao bridge de telemetria!');
       
-      // Envia os parâmetros de configuração (potência, antenas) assim que conecta
+      // Envia os parâmetros iniciais para o bridge
       ws.send(JSON.stringify({
         action: 'CONFIGURE',
         ip: ipLeitor,
@@ -75,19 +77,19 @@ export default function AntenasPage() {
       try {
         const dadosRfid = JSON.parse(event.data);
         
-        // Espera receber um evento do tipo 'TAG_READ' do seu bridge
+        // 🔥 DEBUG NO NAVEGADOR: Aperte F12 para ver se este log aparece quando passar a tag
+        console.log("Tag recebida do bridge.js via WS:", dadosRfid);
+        
         if (dadosRfid.event === 'TAG_READ') {
-          setLogsLeitura(prev => [
-            { 
+          // 🔥 CORREÇÃO 3: Uso do prev de forma limpa garantindo a reatividade do array
+          setLogsLeitura(prev => {
+            const novoLog = { 
               time: new Date().toLocaleTimeString('pt-BR'), 
-              tag: dadosRfid.tagId, // Código EPC completo (Ex: E28011...)
-              antena: dadosRfid.antena || 1
-            },
-            ...prev.slice(0, 14) // Mantém os últimos 15 logs na tela
-          ]);
-
-          // 💡 DICA: Se a tela de cronometragem estiver aberta em outra aba,
-          // você pode disparar um CustomEvent ou salvar as passagens direto na API aqui!
+              tag: dadosRfid.tagId, 
+              antena: Number(dadosRfid.antena) || 1
+            };
+            return [novoLog, ...prev.slice(0, 14)]; // Segura as últimas 15 linhas na tabela
+          });
         }
       } catch (err) {
         console.error("Erro ao processar dados da leitora:", err);
@@ -95,22 +97,21 @@ export default function AntenasPage() {
     };
 
     ws.onerror = (error) => {
-      console.error('Erro no WebSocket:', error);
+      console.error('Erro no WebSocket do front-end:', error);
       setStatusConexao('DISCONNECTED');
     };
 
     ws.onclose = () => {
-      setStatusConexao('DISCONNECTED');
       console.log('Conexão com o bridge encerrada.');
+      setStatusConexao('DISCONNECTED');
+      socketRef.current = null;
     };
   };
 
   const desconectarLeitor = () => {
     if (socketRef.current) {
       socketRef.current.close();
-      socketRef.current = null;
     }
-    setStatusConexao('DISCONNECTED');
   };
 
   const salvarConfiguracao = async (e: React.FormEvent) => {
@@ -131,7 +132,6 @@ export default function AntenasPage() {
       if (res.ok) {
         alert('Parâmetros de hardware sincronizados no banco de dados!');
         
-        // Se estiver conectado, envia as novas configurações a quente para o bridge
         if (statusConexao === 'CONNECTED' && socketRef.current) {
           socketRef.current.send(JSON.stringify({
             action: 'RECONFIGURE',
@@ -267,7 +267,7 @@ export default function AntenasPage() {
           </div>
         </div>
 
-        {/* COLUNA 3: FEED DE PASSAGENS EM TEMPO REAL (LOGS REAIS) */}
+        {/* COLUNA 3: FEED DE PASSAGENS EM TEMPO REAL */}
         <div className="bg-[#111] border border-gray-800 rounded-xl p-5 space-y-4 flex flex-col h-[400px] lg:h-auto">
           <h2 className="text-xs font-bold uppercase tracking-wider text-gray-400 flex items-center justify-between">
             <span className="flex items-center gap-2"><Activity size={14} /> Console de Captura Real</span>
@@ -282,7 +282,7 @@ export default function AntenasPage() {
               </div>
             ) : (
               logsLeitura.map((log, i) => (
-                <div key={i} className="flex justify-between border-b border-gray-900 pb-1.5 last:border-0 items-center animate-fadeIn">
+                <div key={i} className="flex justify-between border-b border-gray-900 pb-1.5 last:border-0 items-center">
                   <span className="text-gray-600">[{log.time}]</span>
                   <span className="text-green-400 font-bold tracking-tight">{log.tag}</span>
                   <span className="bg-red-950/40 text-red-400 text-[10px] px-1.5 py-0.5 rounded font-bold border border-red-900/30">ANT 0{log.antena}</span>

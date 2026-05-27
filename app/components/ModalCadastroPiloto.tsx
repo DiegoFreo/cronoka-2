@@ -1,12 +1,12 @@
 'use client';
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Upload, UserPlus, FileSpreadsheet, CheckCircle, Edit3 } from 'lucide-react';
+import { X, Upload, UserPlus, FileSpreadsheet, CheckCircle, Edit3, ListChecks } from 'lucide-react';
 import * as XLSX from 'xlsx';
 
 interface ModalCadastroProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (novoPiloto?: any) => void; 
   pilotoParaEditar?: any; 
 }
 
@@ -19,61 +19,102 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
   // Estados do formulário manual
   const [nome, setNome] = useState('');
   const [numero, setNumero] = useState('');
-  const [tagId, setTagId] = useState('');
-  const [categoria, setCategoria] = useState(''); 
-  const [patrocinador, setPatrocinador] = useState(''); // Estado mantido e agora visível
-  const [tagsBanco, setTagsBanco] = useState<any[]>([]); // Para carregar as tags disponíveiss
+  const [tagId, setTagId] = useState(''); // Guardará a TAG selecionada
+  const [patrocinador, setPatrocinador] = useState(''); 
+  const [categoriasSelecionadas, setCategoriasSelecionadas] = useState<string[]>([]);
+  
+  // Listas vindas do banco
+  const [tagsBanco, setTagsBanco] = useState<any[]>([]); 
+  const [categoriasBanco, setCategoriasBanco] = useState<any[]>([]); 
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isEditing = !!pilotoParaEditar; 
 
+  // Carrega as tags e as categorias dentro do Modal de Pilotos
+  useEffect(() => {
+    async function carregarDadosBanco() {
+      try {
+        const [resTags, resCats] = await Promise.all([
+          fetch('/api/tag'),
+          fetch('/api/categoria')
+        ]);
+        
+        const todasAsTags = await resTags.json();
+        const todasAsCategorias = await resCats.json();
+        
+        if (Array.isArray(todasAsTags)) {
+          const tagAtualPiloto = pilotoParaEditar?.tag?.[0] || pilotoParaEditar?.tagRfid || pilotoParaEditar?.tagId || pilotoParaEditar?.tag;
 
-  // Exemplo de como carregar as tags dentro do Modal de Pilotos
-useEffect(() => {
-  async function buscarTagsDisponiveis() {
-    const res = await fetch('/api/tag');
-    const todasAsTags = await res.json();
-    
-    // Filtra para mostrar apenas as tags que NÃO estão ocupadas (flag: false)
-    // Mas mantém a tag que já pertence a este piloto se for uma edição
-    const filtradas = todasAsTags.filter((t: any) => 
-      t.flag === false || t.tag === pilotoParaEditar?.tag
-    );
-    
-    setTagsBanco(filtradas);
-  }
-  if (isOpen) buscarTagsDisponiveis();
-}, [isOpen, pilotoParaEditar]);
+          // Filtra mantendo apenas as livres (flag === false) OU a que o piloto já está usando
+          const filtradas = todasAsTags.filter((t: any) => 
+            t.flag === false || t.num === tagAtualPiloto || t.tag === tagAtualPiloto || t._id === tagAtualPiloto
+          );
+          
+          setTagsBanco(filtradas);
+
+          // ✨ GARANTE QUE SELECIONA O VALOR QUE VAI PRO SELECT
+          if (!isEditing && filtradas.length > 0) {
+            // Se o seu objeto da tag usa .num ou .tag, pega ele aqui para passar ao value do select
+            const proximaLivre = filtradas[0].num || filtradas[0].tag || filtradas[0]._id || '';
+            setTagId(proximaLivre);
+          }
+        }
+
+        if (Array.isArray(todasAsCategorias)) {
+          setCategoriasBanco(todasAsCategorias);
+        }
+      } catch (err) {
+        console.error("Erro ao buscar dados do banco:", err);
+      }
+    }
+    if (isOpen) carregarDadosBanco();
+  }, [isOpen, pilotoParaEditar, isEditing]);
 
   // Monitora se foi passado um piloto para carregar os dados na tela
   useEffect(() => {
     if (pilotoParaEditar && isOpen) {
-      
       setNome(pilotoParaEditar.nome || '');
       setNumero(pilotoParaEditar.numero_piloto || '');
-      setTagId(pilotoParaEditar.tag?.[0] || '');
+      
+     const tagAtual = pilotoParaEditar.tag?.[0] || pilotoParaEditar.tagRfid || pilotoParaEditar.tagId || pilotoParaEditar.tag || '';
+     setTagId(tagAtual);
+      
       setPatrocinador(pilotoParaEditar.patrocinador || '');
       
-      // Converte a lista de objetos categoria de volta para texto separado por ";"
       if (pilotoParaEditar.categorias && Array.isArray(pilotoParaEditar.categorias)) {
-        const textoCategorias = pilotoParaEditar.categorias.map((c: any) => c.nome).join('; ');
-        setCategoria(textoCategorias);
+        const ids = pilotoParaEditar.categorias.map((c: any) => typeof c === 'string' ? c : c._id);
+        setCategoriasSelecionadas(ids);
+      } else if (pilotoParaEditar.categoriaId) {
+        setCategoriasSelecionadas([pilotoParaEditar.categoriaId]);
       } else {
-        setCategoria('');
+        setCategoriasSelecionadas([]);
       }
+      
       setAbaAtiva('manual'); 
-    } else {
+    } else if (!isOpen) {
       limparCampos();
     }
   }, [pilotoParaEditar, isOpen]);
 
   if (!isOpen) return null;
 
+  function toggleCategoria(id: string) {
+    if (categoriasSelecionadas.includes(id)) {
+      setCategoriasSelecionadas(categoriasSelecionadas.filter(item => item !== id));
+    } else {
+      setCategoriasSelecionadas([...categoriasSelecionadas, id]);
+    }
+  }
+
   // Lógica unificada de envio (POST ou PUT)
   const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome || !numero) {
       setErro("Nome e Número do piloto são obrigatórios.");
+      return;
+    }
+    if (categoriasSelecionadas.length === 0) {
+      setErro("Selecione ao menos uma categoria para o piloto.");
       return;
     }
 
@@ -85,12 +126,12 @@ useEffect(() => {
       const method = isEditing ? 'PUT' : 'POST';
       
       const payload = {
-        id: pilotoParaEditar?._id, 
-        nome,
+        id: pilotoParaEditar?._id || pilotoParaEditar?.id, 
+        nome: nome.trim(),
         numero_piloto: numero,
-        tagId,
-        categoriaTexto: categoria,
-        patrocinador // Enviando patrocinador no envio manual
+        tagId, // Envia a Tag selecionada no select
+        categorias: categoriasSelecionadas, 
+        patrocinador 
       };
 
       const response = await fetch(url, {
@@ -103,7 +144,19 @@ useEffect(() => {
       if (!response.ok) throw new Error(resultado.error || "Erro ao salvar piloto.");
 
       setSucesso(isEditing ? "Piloto atualizado com sucesso!" : "Piloto cadastrado com sucesso!");
-      onSuccess();
+      
+      const primeiraCatId = categoriasSelecionadas[0];
+      const nomeCategoriaFallback = categoriasBanco.find(c => c._id === primeiraCatId)?.nome || 'Geral';
+
+      const pilotoRetorno = resultado.piloto || { 
+        id: pilotoParaEditar?._id || resultado.id || Date.now().toString(),
+        nome, 
+        numero, 
+        tagRfid: tagId, 
+        categoriaNome: nomeCategoriaFallback
+      };
+      
+      onSuccess(pilotoRetorno);
       setTimeout(() => fecharLimpar(), 1500);
 
     } catch (err: any) {
@@ -113,7 +166,7 @@ useEffect(() => {
     }
   };
 
-  // 1. PROCESSAR IMPORTAÇÃO DO EXCEL/CSV
+  // PROCESSAR IMPORTAÇÃO DO EXCEL/CSV
   const handleImportarExcel = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -140,7 +193,7 @@ useEffect(() => {
           nome: linha['Nome'] || '',
           numero_piloto: linha['Nº'], 
           tagId: linha['Chip'],      
-          categoriaTexto: WebHeaderStringFix(linha['Categoria'] || ''), 
+          categorias: WebHeaderStringFix(linha['Categoria'] || ''), 
           patrocinador: linha['PATROCINADORES'] || '' 
         }));
 
@@ -155,7 +208,7 @@ useEffect(() => {
         if (!response.ok) throw new Error(resultado.error || "Erro ao salvar lote de pilotos.");
 
         setSucesso(`${loteFormatado.length} pilotos importados e vinculados às suas categorias!`);
-        onSuccess();
+        onSuccess(); 
         setTimeout(() => fecharLimpar(), 2000);
 
       } catch (err: any) {
@@ -168,25 +221,25 @@ useEffect(() => {
     reader.readAsBinaryString(file);
   };
 
-  // Função auxiliar para remover espaços duplicados ocultos que vêm de planilhas
   const WebHeaderStringFix = (str: string) => str.replace(/\s+/g, ' ');
 
   function limparCampos() {
-    setNome(''); setNumero(''); setTagId(''); setCategoria(''); setPatrocinador('');
+    setNome(''); setNumero(''); setTagId(''); setPatrocinador('');
+    setCategoriasSelecionadas([]); 
     setErro(null); setSucesso(null);
-  };
+  }
 
   function fecharLimpar() {
     limparCampos();
     setAbaAtiva('manual');
     onClose();
-  };
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
       <div className="w-full max-w-lg bg-[#111] border border-gray-800 rounded-xl overflow-hidden shadow-2xl flex flex-col">
         
-        {/* Header muda o título se for edição */}
+        {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-[#161616]">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             {isEditing ? (
@@ -200,15 +253,15 @@ useEffect(() => {
           </button>
         </div>
 
-        {/* Oculta as abas se for edição */}
+        {/* Abas Alternáveis */}
         {!isEditing && (
           <div className="flex border-b border-gray-800 text-sm">
-            <button onClick={() => setAbaAtiva('manual')} className={`flex-1 py-3 font-medium border-b-2 text-center transition-all ${abaAtiva === 'manual' ? 'border-red-600 text-red-500 bg-red-950/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>Cadastro Manual</button>
-            <button onClick={() => setAbaAtiva('planilha')} className={`flex-1 py-3 font-medium border-b-2 text-center transition-all ${abaAtiva === 'planilha' ? 'border-red-600 text-red-500 bg-red-950/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>Importar Planilha Real</button>
+            <button type="button" onClick={() => setAbaAtiva('manual')} className={`flex-1 py-3 font-medium border-b-2 text-center transition-all ${abaAtiva === 'manual' ? 'border-red-600 text-red-500 bg-red-950/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>Cadastro Manual</button>
+            <button type="button" onClick={() => setAbaAtiva('planilha')} className={`flex-1 py-3 font-medium border-b-2 text-center transition-all ${abaAtiva === 'planilha' ? 'border-red-600 text-red-500 bg-red-950/5' : 'border-transparent text-gray-400 hover:text-gray-200'}`}>Importar Planilha Real</button>
           </div>
         )}
 
-        {/* Conteúdo */}
+        {/* Conteúdo do Modal */}
         <div className="p-6 flex-1 overflow-y-auto">
           {erro && <div className="p-3 mb-4 text-sm bg-red-950/40 border border-red-500/30 text-red-400 rounded-lg">{erro}</div>}
           {sucesso && (
@@ -224,54 +277,78 @@ useEffect(() => {
                 <input 
                   type="text" value={nome} onChange={e => setNome(e.target.value)}
                   placeholder="Ex: OTAVIO AMÂNCIO"
-                  className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none"
+                  className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none text-sm"
                 />
               </div>
+              
               <div className="grid grid-cols-2 gap-4">
                 <div className="flex flex-col gap-1">
                   <label className="text-sm text-gray-400">Número (Nº) *</label>
                   <input 
                     type="text" value={numero} onChange={e => setNumero(e.target.value)}
                     placeholder="Ex: 3"
-                    className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none"
+                    className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none text-sm"
                   />
                 </div>
+                
+                {/* ✨ SELETOR DE CHIP / TAG ATUALIZADO */}
                 <div className="flex flex-col gap-1">
-                  <label className="text-sm text-gray-400">Chip / TAG</label>
-                  <input 
-                    type="text" value={tagId} onChange={e => setTagId(e.target.value)}
-                    placeholder="Ex: 802"
-                    className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none"
-                  />
+                  <label className="text-sm text-gray-400">Chip / TAG Sugerido</label>
+                  <select
+                    value={tagId}
+                    onChange={e => setTagId(e.target.value)}
+                    className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none text-sm h-[38px]"
+                  >
+                    <option value="">-- Sem TAG / Nenhum --</option>
+                    {tagsBanco.map((t) => (
+                      <option key={t.num} value={t.num}>
+                        {t.num} {t.flag ? '(Atual do Piloto)' : '(Livre)'}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
               
-              {/* Campo Patrocinador adicionado no Formulário Manual */}
               <div className="flex flex-col gap-1">
                 <label className="text-sm text-gray-400">Patrocinadores</label>
                 <input 
                   type="text" value={patrocinador} onChange={e => setPatrocinador(e.target.value)}
                   placeholder="Ex: Itts distribuidora; I9 Yamaha"
-                  className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none"
+                  className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none text-sm"
                 />
               </div>
 
-              <div className="flex flex-col gap-1">
-                <label className="text-sm text-gray-400">Categorias (Separadas por ponto e vírgula)</label>
-                <input 
-                  type="text" value={categoria} onChange={e => setCategoria(e.target.value)}
-                  placeholder="Ex: FPMX 5; FPMX 1"
-                  className="bg-black border border-gray-800 rounded px-3 py-2 text-white focus:border-red-600 outline-none"
-                />
+              {/* Grid de Categorias */}
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm text-gray-400 flex items-center gap-2">
+                  <ListChecks size={16} /> Categorias Vinculadas *
+                </label>
+                <div className="bg-black/50 border border-gray-800 rounded-lg p-3 max-h-40 overflow-y-auto grid grid-cols-2 gap-2 custom-scrollbar">
+                  {categoriasBanco.map((cat) => {
+                    const Relecionada = categoriasSelecionadas.includes(cat._id);
+                    return (
+                      <div 
+                        key={cat._id} onClick={() => toggleCategoria(cat._id)}
+                        className={`cursor-pointer px-3 py-2 rounded border text-xs font-medium transition-all flex items-center justify-between
+                          ${Relecionada ? 'bg-red-600/10 border-red-600 text-red-500' : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600'}`}
+                      >
+                        {cat.nome}
+                        {Relecionada && <CheckCircle size={14} />}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
+
               <button 
                 type="submit" disabled={loading}
-                className="w-full mt-6 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2 rounded transition-colors"
+                className="w-full mt-6 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2.5 rounded-lg transition-colors text-sm"
               >
                 {loading ? 'Salvando...' : isEditing ? 'Atualizar Dados' : 'Salvar Piloto'}
               </button>
             </form>
           ) : (
+            /* Aba Planilha permanece intacta */
             <div className="space-y-4">
               <div 
                 onClick={() => fileInputRef.current?.click()}

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import conectDB from '../../lib/mongodb';
 import Piloto from '../../model/piloto';
 import Categoria from '../../model/categoria';
+import Tag from "@/app/model/tag";
 import { criarPiloto, listarPilotos, atualizarPiloto, deletarPiloto } from  '../../controller/pilotoController';
 
 // Função auxiliar para quebrar o texto da planilha "FPMX 1; FPMX 2" em uma lista limpa
@@ -18,7 +19,9 @@ export async function POST(request) {
   try {
     await conectDB();
     const corpo = await request.json();
-    const { numero_piloto, nome, tag, categorias } = corpo;
+    // Captura tagId se o front enviar como tagId, e joga para a variável tag
+    const { numero_piloto, nome, tag: tagDireta, tagId, categorias } = corpo;
+    const tag = tagDireta || tagId; 
 
     // 1. Valida se a tag escolhida já não está ocupada por outro piloto
     if (tag) {
@@ -28,10 +31,10 @@ export async function POST(request) {
       }
     }
 
-    const novoCompetidor = new Competidor({
+    const novoCompetidor = new Piloto({
       numero_piloto,
       nome,
-      tag,
+      tag, // Agora salva corretamente no banco de dados
       categorias
     });
     await novoCompetidor.save();
@@ -62,10 +65,11 @@ export async function PUT(request) {
   try {
     await conectDB();
     const corpo = await request.json();
-    const { id, numero_piloto, nome, tag, categorias } = corpo;
+    const { id, numero_piloto, nome, tag: tagDireta, tagId, categorias } = corpo;
+    const tag = tagDireta || tagId;
 
     // 1. Busca o piloto antes da alteração para saber se ele tinha uma tag antiga
-    const pilotoAntigo = await Competidor.findById(id);
+    const pilotoAntigo = await Piloto.findById(id);
     if (!pilotoAntigo) return NextResponse.json({ error: "Piloto não encontrado" }, { status: 404 });
 
     // 2. Se a tag mudou, verifica se a nova tag já está sendo usada por outra pessoa
@@ -77,13 +81,13 @@ export async function PUT(request) {
     }
 
     // 3. Atualiza o piloto
-    const pilotoAtualizado = await Competidor.findByIdAndUpdate(
+    const pilotoAtualizado = await Piloto.findByIdAndUpdate(
       id,
       { numero_piloto, nome, tag, categorias },
       { new: true }
     );
 
-    // 4. LOGICA DE LIBERAÇÃO/OCUPAÇÃO DE CHIPS
+    // 4. LÓGICA DE LIBERAÇÃO/OCUPAÇÃO DE CHIPS
     if (pilotoAntigo.tag !== tag) {
       // Se ele tinha tag antiga, libera ela (flag: false)
       if (pilotoAntigo.tag) {
@@ -108,7 +112,7 @@ export async function DELETE(request) {
     const { searchParams } = new URL(request.url);
     const id = searchParams.get("id");
 
-    const piloto = await Competidor.findById(id);
+    const piloto = await Piloto.findById(id);
     if (!piloto) return NextResponse.json({ error: "Piloto não encontrado" }, { status: 404 });
 
     /* Se o piloto que vai ser deletado usava um chip, libera o chip!
@@ -117,7 +121,7 @@ export async function DELETE(request) {
     }
       */
 
-    await Competidor.findByIdAndDelete(id);
+    await Piloto.findByIdAndDelete(id);
     return NextResponse.json({ success: true });
   } catch (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
