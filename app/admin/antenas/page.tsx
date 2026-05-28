@@ -93,7 +93,7 @@ export default function AntenasPage() {
 
     setStatusConexao('CONNECTING');
 
-    const WS_URL = 'ws://localhost:8080'; 
+    const WS_URL = 'ws://127.0.0.1:8080'; 
     const ws = new WebSocket(WS_URL);
     socketRef.current = ws;
 
