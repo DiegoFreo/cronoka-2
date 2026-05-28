@@ -1,6 +1,6 @@
 'use client';
 import React, { useState, useEffect, useRef } from 'react';
-import { Radio, RefreshCw, Cpu, Activity, Database, AlertCircle } from 'lucide-react';
+import { Radio, RefreshCw, Cpu, Activity, Database, AlertCircle, Play, Square } from 'lucide-react';
 
 export default function AntenasPage() {
   const [baterias, setBaterias] = useState<any>([]);
@@ -17,7 +17,11 @@ export default function AntenasPage() {
   const [logsLeitura, setLogsLeitura] = useState<{ time: string; tag: string; antena: number }[]>([]);
   const [salvando, setSalvando] = useState(false);
 
-  // 🔥 CORREÇÃO 1: Referência persistente para gerenciar a instância única do WebSocket
+  // 🔥 NOVOS ESTADOS: Controle de execução do processo Node do bridge
+  const [porticoExecutando, setPorticoExecutando] = useState(false);
+  const [carregandoProcesso, setCarregandoProcesso] = useState(false);
+
+  // Referência persistente para gerenciar a instância única do WebSocket
   const socketRef = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -36,7 +40,7 @@ export default function AntenasPage() {
     }
     carregarBaterias();
 
-    // 🔥 CORREÇÃO 2: Cleanup total ao desmontar a página para evitar conexões presas
+    // Cleanup total ao desmontar a página para evitar conexões presas
     return () => {
       if (socketRef.current) {
         console.log("Fechando conexão antiga do WebSocket antes de sair...");
@@ -46,9 +50,43 @@ export default function AntenasPage() {
     };
   }, []);
 
-  // 🔥 INTEGRAÇÃO REAL ATUALIZADA
+  // 🔥 NOVA FUNÇÃO: Dispara a ação de ligar/desligar o script do bridge via API
+  const alternarEstadoPortico = async () => {
+    setCarregandoProcesso(true);
+    const acaoDesejada = porticoExecutando ? 'STOP' : 'START';
+
+    try {
+      const res = await fetch('/api/portico', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ acao: acaoDesejada }),
+      });
+
+      if (res.ok) {
+        setPorticoExecutando(!porticoExecutando);
+        
+        // Se acabamos de ligar o script do pórtico, força a tentativa de conexão WS após 2 segundos
+        if (acaoDesejada === 'START') {
+          setTimeout(() => {
+            conectarAoLeitorLocal();
+          }, 2000);
+        } else {
+          // Se desligamos o pórtico, desconecta o WS imediatamente
+          desconectarLeitor();
+        }
+      } else {
+        alert('Falha ao gerenciar o processo do pórtico.');
+      }
+    } catch (err) {
+      console.error("Erro ao gerenciar processo do pórtico:", err);
+      alert('Erro de comunicação com o servidor.');
+    } finally {
+      setCarregandoProcesso(false);
+    }
+  };
+
+  // INTEGRAÇÃO REAL DO WEBSOCKET
   const conectarAoLeitorLocal = () => {
-    // Se já houver um socket aberto ou tentando conectar, limpa ele antes
     if (socketRef.current) {
       socketRef.current.close();
     }
@@ -63,7 +101,6 @@ export default function AntenasPage() {
       setStatusConexao('CONNECTED');
       console.log('✅ Conectado ao bridge de telemetria!');
       
-      // Envia os parâmetros iniciais para o bridge
       ws.send(JSON.stringify({
         action: 'CONFIGURE',
         ip: ipLeitor,
@@ -76,19 +113,16 @@ export default function AntenasPage() {
     ws.onmessage = (event) => {
       try {
         const dadosRfid = JSON.parse(event.data);
-        
-        // 🔥 DEBUG NO NAVEGADOR: Aperte F12 para ver se este log aparece quando passar a tag
         console.log("Tag recebida do bridge.js via WS:", dadosRfid);
         
         if (dadosRfid.event === 'TAG_READ') {
-          // 🔥 CORREÇÃO 3: Uso do prev de forma limpa garantindo a reatividade do array
           setLogsLeitura(prev => {
             const novoLog = { 
               time: new Date().toLocaleTimeString('pt-BR'), 
               tag: dadosRfid.tagId, 
               antena: Number(dadosRfid.antena) || 1
             };
-            return [novoLog, ...prev.slice(0, 14)]; // Segura as últimas 15 linhas na tabela
+            return [novoLog, ...prev.slice(0, 14)];
           });
         }
       } catch (err) {
@@ -130,7 +164,7 @@ export default function AntenasPage() {
         })
       });
       if (res.ok) {
-        alert('Parâmetros de hardware sincronizados no banco de dados!');
+        alert('Parâmetros de hardware synchronized no banco de dados!');
         
         if (statusConexao === 'CONNECTED' && socketRef.current) {
           socketRef.current.send(JSON.stringify({
@@ -160,19 +194,55 @@ export default function AntenasPage() {
           <p className="text-xs text-gray-400 mt-1">Gerenciamento de antenas Zebra FX7400 / Motorola e potência de RF.</p>
         </div>
 
-        {/* STATUS DE CONEXÃO EM TEMPO REAL */}
-        <div className="flex items-center gap-3 bg-[#111] border border-gray-800 px-4 py-2 rounded-xl">
-          <div className={`w-3 h-3 rounded-full ${
-            statusConexao === 'CONNECTED' ? 'bg-green-500 animate-pulse' : statusConexao === 'CONNECTING' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
-          }`} />
-          <span className="text-xs font-mono font-bold tracking-wider">
-            {statusConexao === 'CONNECTED' ? 'LEITOR CONECTADO' : statusConexao === 'CONNECTING' ? 'BUSCANDO SINAL...' : 'LEITOR OFFLINE'}
-          </span>
-          {statusConexao === 'DISCONNECTED' ? (
-            <button onClick={conectarAoLeitorLocal} className="ml-2 p-1 text-gray-400 hover:text-white transition-colors" title="Conectar ao hardware"><RefreshCw size={14} /></button>
-          ) : (
-            <button onClick={desconectarLeitor} className="ml-2 text-xs text-red-500 hover:underline">Desconectar</button>
-          )}
+        <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3 w-full sm:w-auto">
+          
+          {/* 🔥 BOTÃO DE ATIVAÇÃO FÍSICA DO PÓRTICO (MÁQUINA EM SEGUNDO PLANO) */}
+          <button
+            onClick={alternarEstadoPortico}
+            disabled={carregandoProcesso}
+            className={`w-full sm:w-auto flex items-center justify-center gap-2 px-4 py-2 rounded-xl text-xs font-bold uppercase tracking-wider transition-all border ${
+              porticoExecutando 
+                ? 'bg-red-950/20 text-red-400 border-red-900/50 hover:bg-red-900/30' 
+                : 'bg-green-950/20 text-green-400 border-green-900/50 hover:bg-green-900/30'
+            } ${carregandoProcesso ? 'opacity-40 cursor-not-allowed' : ''}`}
+          >
+            {porticoExecutando ? (
+              <>
+                <Square size={13} fill="currentColor" />
+                {carregandoProcesso ? 'Desligando...' : 'Desativar Pórtico'}
+              </>
+            ) : (
+              <>
+                <Play size={13} fill="currentColor" />
+                {carregandoProcesso ? 'Iniciando...' : 'Ativar Pórtico'}
+              </>
+            )}
+          </button>
+
+          {/* STATUS DE CONEXÃO EM TEMPO REAL VIA WEBSOCKET */}
+          <div className="flex items-center gap-3 bg-[#111] border border-gray-800 px-4 py-2 rounded-xl w-full sm:w-auto justify-between sm:justify-start">
+            <div className="flex items-center gap-2">
+              <div className={`w-3 h-3 rounded-full ${
+                statusConexao === 'CONNECTED' ? 'bg-green-500 animate-pulse' : statusConexao === 'CONNECTING' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
+              }`} />
+              <span className="text-xs font-mono font-bold tracking-wider">
+                {statusConexao === 'CONNECTED' ? 'LEITOR CONECTADO' : statusConexao === 'CONNECTING' ? 'BUSCANDO SINAL...' : 'LEITOR OFFLINE'}
+              </span>
+            </div>
+            
+            {statusConexao === 'DISCONNECTED' ? (
+              <button 
+                onClick={conectarAoLeitorLocal} 
+                disabled={!porticoExecutando}
+                className={`ml-2 p-1 text-gray-400 hover:text-white transition-colors disabled:opacity-20 disabled:cursor-not-allowed`} 
+                title={porticoExecutando ? "Conectar ao hardware" : "Ative o pórtico primeiro para poder conectar"}
+              >
+                <RefreshCw size={14} />
+              </button>
+            ) : (
+              <button onClick={desconectarLeitor} className="ml-2 text-xs text-red-500 hover:underline">Desconectar</button>
+            )}
+          </div>
         </div>
       </div>
 

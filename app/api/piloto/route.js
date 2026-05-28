@@ -25,7 +25,7 @@ export async function POST(request) {
 
     // 1. Valida se a tag escolhida já não está ocupada por outro piloto
     if (tag) {
-      const tagOcupada = await Tag.findOne({ tag: tag, flag: true });
+      const tagOcupada = await Tag.findOne({ num: tag, flag: true });
       if (tagOcupada) {
         return NextResponse.json({ error: "Este chip (Tag) já está atribuído a outro competidor!" }, { status: 400 });
       }
@@ -41,7 +41,7 @@ export async function POST(request) {
 
     // 2. SE deu certo, marca a tag como Ocupada (flag: true)
     if (tag) {
-      await Tag.findOneAndUpdate({ tag: tag }, { flag: true });
+      await Tag.findOneAndUpdate({ num: tag }, { flag: true });
     }
 
     return NextResponse.json(novoCompetidor, { status: 201 });
