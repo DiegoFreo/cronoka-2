@@ -1,5 +1,6 @@
 'use client';
 import React, { useState, ReactNode } from 'react';
+import { Metadata } from 'next';
 import Link from 'next/link'; 
 import { usePathname } from 'next/navigation';
 import { 
@@ -37,13 +38,14 @@ const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = f
   </Link>
 );
 
+
 const menuItems = [
   { id: 1, icon: Home, label: 'Painel Principal', href: '/admin' },
   { id: 2, icon: Users, label: 'Competidores', href: '/admin/competidor' },
   { id: 3, icon: UserCheck, label: 'Usuários / Staff', href: '/admin/usuario' },
   { id: 4, icon: Layers, label: 'Categorias', href: '/admin/categorias' },
   { id: 5, icon: Flag, label: 'Baterias', href: '/admin/baterias' },
-  { id: 6, icon: Calendar, label: 'Eventos', href: '/admin/eventos' },
+  { id: 6, icon: Calendar, label: 'Eventos', href: '/admin/painel' },
   { id: 7, icon: Tag, label: 'TAGs / Chips', href: '/admin/tags' },
   { id: 8, icon: BarChart3, label: 'Relatórios', href: '/relatorios' },
   { id: 9, icon: ShieldCheck, label: 'Licenças', href: '/admin/licencas' },
@@ -65,7 +67,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       case 'Usuários / Staff': return 'Controle de acessos e usuários do painel administrativo.';
       case 'Categorias': return 'Configuração de classes de motores e níveis de competição.';
       case 'Baterias': return 'Organização e definição das ordens de largadas na pista.';
-      case 'Eventos': return 'Planejamento de etapas, datas e locais de corrida.';
+      case 'Eventos': return 'Gerenciamento dos eventos.';
       case 'TAGs / Chips': return 'Controle e atribuição dos transponders RFID de telemetria.';
       case 'Relatórios': return 'Exportação de resultados oficiais e planilhas da federação.';
       case 'Licenças': return 'Validação de permissões e alvarás dos pilotos ativos.';

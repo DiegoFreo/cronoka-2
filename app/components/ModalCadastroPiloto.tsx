@@ -43,7 +43,7 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
         const todasAsCategorias = await resCats.json();
         
         if (Array.isArray(todasAsTags)) {
-          const tagAtualPiloto = pilotoParaEditar?.tag?.[0] || pilotoParaEditar?.tagRfid || pilotoParaEditar?.tagId || pilotoParaEditar?.tag;
+          const tagAtualPiloto = pilotoParaEditar?.tagId || pilotoParaEditar?.tagRfid || pilotoParaEditar?.tag?.[0] || pilotoParaEditar?.tag;
 
           // Filtra mantendo apenas as livres (flag === false) OU a que o piloto já está usando
           const filtradas = todasAsTags.filter((t: any) => 
@@ -54,7 +54,6 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
 
           // ✨ GARANTE QUE SELECIONA O VALOR QUE VAI PRO SELECT
           if (!isEditing && filtradas.length > 0) {
-            // Se o seu objeto da tag usa .num ou .tag, pega ele aqui para passar ao value do select
             const proximaLivre = filtradas[0].num || filtradas[0].tag || filtradas[0]._id || '';
             setTagId(proximaLivre);
           }
@@ -74,18 +73,20 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
   useEffect(() => {
     if (pilotoParaEditar && isOpen) {
       setNome(pilotoParaEditar.nome || '');
-      setNumero(pilotoParaEditar.numero_piloto || '');
+      setNumero(pilotoParaEditar.numero_piloto?.toString() || pilotoParaEditar.numero?.toString() || '');
       
-     const tagAtual = pilotoParaEditar.tag?.[0] || pilotoParaEditar.tagRfid || pilotoParaEditar.tagId || pilotoParaEditar.tag || '';
-     setTagId(tagAtual);
+      const tagAtual = pilotoParaEditar.tagId || pilotoParaEditar.tagRfid || (Array.isArray(pilotoParaEditar.tag) ? pilotoParaEditar.tag[0] : pilotoParaEditar.tag) || '';
+      setTagId(tagAtual);
       
       setPatrocinador(pilotoParaEditar.patrocinador || '');
       
       if (pilotoParaEditar.categorias && Array.isArray(pilotoParaEditar.categorias)) {
-        const ids = pilotoParaEditar.categorias.map((c: any) => typeof c === 'string' ? c : c._id);
+        const ids = pilotoParaEditar.categorias.map((c: any) => typeof c === 'object' ? c._id : c);
         setCategoriasSelecionadas(ids);
       } else if (pilotoParaEditar.categoriaId) {
         setCategoriasSelecionadas([pilotoParaEditar.categoriaId]);
+      } else if (pilotoParaEditar.categoria) {
+        setCategoriasSelecionadas([typeof pilotoParaEditar.categoria === 'object' ? pilotoParaEditar.categoria._id : pilotoParaEditar.categoria]);
       } else {
         setCategoriasSelecionadas([]);
       }
@@ -109,7 +110,7 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
   // Lógica unificada de envio (POST ou PUT)
   const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nome || !numero) {
+    if (!nome.trim() || !numero.trim()) {
       setErro("Nome e Número do piloto são obrigatórios.");
       return;
     }
@@ -128,10 +129,10 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
       const payload = {
         id: pilotoParaEditar?._id || pilotoParaEditar?.id, 
         nome: nome.trim(),
-        numero_piloto: numero,
+        numero_piloto: Number(numero),
         tagId, // Envia a Tag selecionada no select
         categorias: categoriasSelecionadas, 
-        patrocinador 
+        patrocinador: patrocinador.trim()
       };
 
       const response = await fetch(url, {
@@ -190,11 +191,11 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
         }
 
         const loteFormatado = dadosPlanilha.map((linha: any) => ({
-          nome: linha['Nome'] || '',
-          numero_piloto: linha['Nº'], 
-          tagId: linha['Chip'],      
-          categorias: WebHeaderStringFix(linha['Categoria'] || ''), 
-          patrocinador: linha['PATROCINADORES'] || '' 
+          nome: String(linha['Nome'] || '').trim(),
+          numero_piloto: linha['Nº'] || linha['Numero'], 
+          tagId: String(linha['Chip'] || linha['Tag'] || '').trim(),      
+          categoriaTexto: WebHeaderStringFix(String(linha['Categoria'] || '').trim()), 
+          patrocinador: String(linha['PATROCINADORES'] || '').trim() 
         }));
 
         const response = await fetch('/api/piloto', {
@@ -291,7 +292,7 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
                   />
                 </div>
                 
-                {/* ✨ SELETOR DE CHIP / TAG ATUALIZADO */}
+                {/* Selector de Chip / TAG */}
                 <div className="flex flex-col gap-1">
                   <label className="text-sm text-gray-400">Chip / TAG Sugerido</label>
                   <select
@@ -325,15 +326,15 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
                 </label>
                 <div className="bg-black/50 border border-gray-800 rounded-lg p-3 max-h-40 overflow-y-auto grid grid-cols-2 gap-2 custom-scrollbar">
                   {categoriasBanco.map((cat) => {
-                    const Relecionada = categoriasSelecionadas.includes(cat._id);
+                    const selecionada = categoriasSelecionadas.includes(cat._id);
                     return (
                       <div 
                         key={cat._id} onClick={() => toggleCategoria(cat._id)}
                         className={`cursor-pointer px-3 py-2 rounded border text-xs font-medium transition-all flex items-center justify-between
-                          ${Relecionada ? 'bg-red-600/10 border-red-600 text-red-500' : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600'}`}
+                          ${selecionada ? 'bg-red-600/10 border-red-600 text-red-500' : 'bg-gray-900 border-gray-800 text-gray-400 hover:border-gray-600'}`}
                       >
                         {cat.nome}
-                        {Relecionada && <CheckCircle size={14} />}
+                        {selecionada && <CheckCircle size={14} className="text-red-500" />}
                       </div>
                     );
                   })}
@@ -348,7 +349,7 @@ export function ModalCadastroPiloto({ isOpen, onClose, onSuccess, pilotoParaEdit
               </button>
             </form>
           ) : (
-            /* Aba Planilha permanece intacta */
+            /* Aba Planilha */
             <div className="space-y-4">
               <div 
                 onClick={() => fileInputRef.current?.click()}

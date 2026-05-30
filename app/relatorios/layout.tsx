@@ -47,8 +47,8 @@ const menuItems = [
   { id: 7, icon: Tag, label: 'TAGs / Chips', href: '/admin/tags' },
   { id: 8, icon: BarChart3, label: 'Relatórios', href: '/relatorios' },
   { id: 9, icon: ShieldCheck, label: 'Licenças', href: '/admin/licencas' },
-  { id: 10, icon: Settings, label: 'Configurações', href: '/admin/configuracoes' },
-  { id: 11, icon: Play, label: 'Iniciar Corrida', href: '/admin/corrida', isCritical: true },
+  { id: 10, icon: Settings, label: 'Configurações', href: '/admin/antenas' },
+  { id: 11, icon: Play, label: 'Iniciar Corrida', href: '/corrida', isCritical: true },
 ];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {

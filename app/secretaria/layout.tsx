@@ -1,104 +1,166 @@
 'use client';
 import React, { useState, ReactNode } from 'react';
+import { Metadata } from 'next';
+import Link from 'next/link'; 
+import { usePathname } from 'next/navigation';
 import { 
-  Home, Users, Trophy, Layers, Flag, Calendar, 
-  Tag, BarChart3, ShieldCheck, Settings, Play, Menu, X, LucideIcon
+  Home, Users, UserCheck, Layers, Flag, Calendar, 
+  Tag, BarChart3, ShieldCheck, Settings, Play, Menu, X, LucideIcon, LogOut
 } from 'lucide-react';
 
-// Interface para as propriedades do item do menu
 interface SidebarItemProps {
   icon: LucideIcon;
   label: string;
   active?: boolean;
+  href: string;
   onClick?: () => void;
+  isCritical?: boolean;
 }
 
-// Interface para o Layout principal
 interface DashboardLayoutProps {
   children: ReactNode;
 }
 
-const SidebarItem = ({ icon: Icon, label, active = false, onClick }: SidebarItemProps) => (
-  <div className={`
-    flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all
-    ${active 
-      ? 'bg-red-600 text-white shadow-lg shadow-red-900/20' 
-      : 'text-gray-400 hover:bg-gray-800 hover:text-gray-200'}
-  `} onClick={onClick}>
-    <Icon size={20} />
-    <span className="font-medium">{label}</span>
-  </div>
+// Componente de Item do Menu Otimizado
+const SidebarItem: React.FC<SidebarItemProps> = ({ icon: Icon, label, active = false, onClick, href, isCritical = false }) => (
+  <Link href={href} onClick={onClick} className="block no-underline">
+    <div className={`
+      flex items-center gap-3 px-4 py-3 rounded-lg cursor-pointer transition-all font-sans text-sm font-medium
+      ${isCritical 
+        ? 'bg-red-600 hover:bg-red-700 text-white shadow-lg shadow-red-900/30 animate-pulse-subtle font-bold' 
+        : active 
+          ? 'bg-white/[0.04] border border-gray-800 text-red-500 shadow-md' 
+          : 'text-gray-400 hover:bg-white/[0.02] hover:text-gray-200 border border-transparent'}
+    `}>
+      <Icon size={18} className={active && !isCritical ? "text-red-500" : ""} />
+      <span>{label}</span>
+    </div>
+  </Link>
 );
+
+
+const menuItems = [
+  { id: 1, icon: Home, label: 'Painel Principal', href: '/secretaria' },
+  { id: 2, icon: Users, label: 'Competidores', href: '/secretaria/competidor' },
+  { id: 3, icon: Calendar, label: 'Eventos', href: '/secretaria/eventos' },
+  { id: 4, icon: Tag, label: 'TAGs / Chips', href: '/secretaria/tags' },
+  { id: 5, icon: BarChart3, label: 'Relatórios', href: '/relatorios' },
+  { id: 6, icon: Play, label: 'Iniciar Corrida', href: '/corrida', isCritical: true },
+];
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const [isOpen, setIsOpen] = useState(false);
+  const pathname = usePathname();
+
+  const itemAtivo = menuItems.find((item) => item.href === pathname) || { label: 'Administração', description: 'Painel de controle técnico' };
+
+  // Dicionário de descrições dinâmicas para os títulos da página
+  const getDescricaoPagina = (label: string) => {
+    switch (label) {
+      case 'Painel Principal': return 'Visão geral das estatísticas e métricas da temporada.';
+      case 'Competidores': return 'Gerenciamento de pilotos inscritos, numeração e históricos.';
+      case 'Eventos': return 'Planejamento de etapas, datas e locais de corrida.';
+      case 'TAGs / Chips': return 'Controle e atribuição dos transponders RFID de telemetria.';
+      case 'Relatórios': return 'Exportação de resultados oficiais e planilhas da federação.';
+      default: return 'Gerenciamento e configurações do sistema.';
+    }
+  };
 
   return (
-    <div className="flex h-screen bg-black text-white overflow-hidden">
-      {/* Menu Lateral - Desktop & Mobile */}
+    <div className="flex h-screen bg-[#070707] text-white overflow-hidden font-sans">
+      
+      {/* Menu Lateral */}
       <aside className={`
-        fixed inset-y-0 left-0 z-50 w-64 bg-[#111] border-r border-red-900/30 transform transition-transform duration-300 ease-in-out
+        fixed inset-y-0 left-0 z-50 w-64 bg-[#0d0d0d] border-r border-gray-900 transform transition-transform duration-300 ease-in-out flex flex-col
         lg:relative lg:translate-x-0
         ${isOpen ? 'translate-x-0' : '-translate-x-full'}
       `}>
-        <div className="flex flex-col h-full p-4">
-          {/* Logo Container */}
-          <div className="flex items-center justify-center py-8 border-b border-gray-800 mb-6">
-            <div className="w-30 h-30 bg-gray-900 border border-red-600 rounded-lg flex items-center justify-center">
-              <span className="text-red-600 py-2 px-4 font-bold text-xl"><img src="FPMX-logo.png" alt="Logo" /></span>
+        {/* Logo Container Otimizado */}
+        <div className="flex items-center justify-center py-6 border-b border-gray-900 px-4">
+          <div className="h-16 w-full relative flex items-center justify-center bg-black/20 rounded-xl p-2 border border-gray-900/50">
+            <img src="/FPMX-logo.png" alt="FPMX Logo" className="h-full object-contain max-w-full" />
+          </div>
+        </div>
+
+        {/* Links de Navegação */}
+        <nav className="flex-1 p-4 space-y-1 overflow-y-auto custom-scrollbar">
+          {menuItems.map((item) => (
+            <SidebarItem 
+              key={item.id} 
+              href={item.href}
+              icon={item.icon}
+              label={item.label}            
+              active={pathname === item.href}
+              isCritical={item.isCritical}
+              onClick={() => setIsOpen(false)} 
+            />
+          ))}
+        </nav>
+
+        {/* Perfil / Footer do Menu */}
+        <div className="p-4 border-t border-gray-900 bg-[#0a0a0a] flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full border border-red-600/50 overflow-hidden shrink-0 shadow-inner">
+               <img src="https://avatars.githubusercontent.com/u/130919749?v=4" alt="Mário Alexandre" />
+            </div>
+            <div className="flex flex-col min-w-0">
+              <span className="text-xs font-bold text-gray-200 truncate block">Mário Alexandre</span>
+              <span className="text-[10px] text-gray-500 font-medium tracking-wide uppercase">Admin</span>
             </div>
           </div>
-
-          {/* Nav Links */}
-          <nav className="flex-1 space-y-1 overflow-y-auto custom-scrollbar">
-            <SidebarItem icon={Home} label="Home" active />
-            <SidebarItem icon={Users} label="Competidores" />
-            <SidebarItem icon={Layers} label="Categoria" />
-            <SidebarItem icon={Flag} label="Bateria" />
-            <SidebarItem icon={Calendar} label="Eventos" />
-            <SidebarItem icon={Tag} label="TAGs" />
-            <SidebarItem icon={BarChart3} label="Relatório" />
-          </nav>
-
-          {/* Footer do Menu / Profile */}
-          <div className="mt-auto pt-4 border-t border-gray-800 flex items-center justify-between">
-            <button className="bg-gray-800 hover:bg-red-700 px-4 py-2 rounded text-sm transition-colors">
-              Sair
-            </button>
-            <div className="w-10 h-10 rounded-full border-2 border-red-600 overflow-hidden">
-               <img src="/api/placeholder/40/40" alt="User" />
-            </div>
-          </div>
+          
+          <button 
+            title="Sair do painel"
+            className="p-2 text-gray-500 hover:text-red-500 hover:bg-red-950/20 rounded-lg transition-all"
+          >
+            <LogOut size={16} />
+          </button>
         </div>
       </aside>
 
-      {/* Área Principal */}
+      {/* Área de Conteúdo Principal */}
       <main className="flex-1 flex flex-col min-w-0 overflow-hidden">
-        {/* Header Mobile */}
-        <header className="lg:hidden flex items-center justify-between p-4 bg-[#111] border-b border-red-900/30">
-          <span className="text-red-600 font-bold">ADMINISTRADOR</span>
-          <button onClick={() => setIsOpen(!isOpen)} className="text-white">
-            {isOpen ? <X /> : <Menu />}
+        
+        {/* Header de Barra Superior Mobile */}
+        <header className="lg:hidden flex items-center justify-between p-4 bg-[#0d0d0d] border-b border-gray-900">
+          <div className="h-8 flex items-center">
+            <img src="/FPMX-logo.png" alt="FPMX" className="h-full object-contain" />
+          </div>
+          <button 
+            onClick={() => setIsOpen(!isOpen)} 
+            className="p-1.5 text-gray-400 hover:text-white bg-gray-900 border border-gray-800 rounded-md transition-colors"
+          >
+            {isOpen ? <X size={20} /> : <Menu size={20} />}
           </button>
         </header>
 
-        {/* Conteúdo Dinâmico */}
-        <div className="flex-1 overflow-y-auto p-6 bg-black">
-          <div className="max-w-7xl mx-auto">
-            {/* Título de exemplo da sua imagem */}
-            <div className="w-full border border-red-600 rounded p-2 text-center mb-8">
-              <h1 className="text-red-600 uppercase font-bold tracking-widest">Administrador</h1>
+        {/* Scroll Interno do Conteúdo */}
+        <div className="flex-1 overflow-y-auto bg-[#070707] custom-scrollbar">
+          <div className="max-w-7xl mx-auto p-6 md:p-10">
+            
+            {/* Título de Página Executivo - Integrado no Topo */}
+            <div className="mb-8 border-b border-gray-900 pb-5 hidden lg:block">
+              <h1 className="text-2xl font-black text-white tracking-tight uppercase">
+                {itemAtivo.label}
+              </h1>
+              <p className="text-xs text-gray-500 mt-1">
+                {getDescricaoPagina(itemAtivo.label)}
+              </p>
             </div>
             
-            {children}
+            {/* Renderização das Subpáginas */}
+            <div className="w-full">
+              {children}
+            </div>
+            
           </div>
         </div>
       </main>
-      
-      {/* Overlay para fechar menu no mobile */}
+
+      {/* Sombra de Fundo Mobile */}
       {isOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+          className="fixed inset-0 bg-black/70 z-40 lg:hidden backdrop-blur-xs transition-opacity"
           onClick={() => setIsOpen(false)}
         />
       )}

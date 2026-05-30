@@ -11,8 +11,8 @@ const PilotoSchema = new mongoose.Schema({
     telefone: { type: String, required: false },
     responsavel: { type: String, required: false },
     tipoSanguineo: { type: String, required: false },
-    categorias: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Categoria' }],
-    tag: { type:[String], default: [], required: false, unique: true },
+    tagId: { type: String, required: true, unique: true }, // ID da Tag RFID (Hexa)
+    categorias: [{ type: mongoose.Schema.Types.ObjectId, ref: "Categoria", required: true }], // Agora é um ARRAY
 }, { timestamps: true });
 
 export default mongoose.models.Piloto || mongoose.model('Piloto', PilotoSchema);

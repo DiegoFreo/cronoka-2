@@ -104,7 +104,6 @@ export default function CronometragemPage() {
             tempoUltimaPassagem: 0,
             statusPista: 'NORMAL'
           }));
-          // Garante a ordenação inicial padrão por número de moto
           setPilotos(ordenarPilotosPorRanking(pilotosFormatados));
         } else {
           setPilotos([]);
@@ -206,7 +205,6 @@ export default function CronometragemPage() {
         return prevPilotos;
       }
 
-      // 🔥 Reordena dinamicamente o grid após computar a nova passagem
       return ordenarPilotosPorRanking(gridAtualizado);
     });
 
@@ -281,7 +279,6 @@ export default function CronometragemPage() {
     return `${minutos.toString().padStart(2, '0')}:${segundos.toString().padStart(2, '0')}.${milis.toString().padStart(3, '0')}`;
   };
 
-  // 👇 🔥 Handler que recebe o piloto do Modal Reutilizável e insere na listagem
   const lidarComPilotoAdicionadoProModal = (pilotoInjetado: any) => {
     if (!pilotoInjetado) return;
 
@@ -302,144 +299,153 @@ export default function CronometragemPage() {
   const formatarSegundos = (ms: number) => (ms / 1000).toFixed(3) + 's';
 
   return (
-    <div className="space-y-6 font-sans bg-[#070707] min-h-screen text-white p-6">
+    // 🔥 ALTURA FIXADA NA TELA INTEIRA (h-screen) E REMOVIDO SCROLL GLOBAL (overflow-hidden)
+    <div className="font-sans bg-[#070707] h-screen text-white p-4 sm:p-6 flex flex-col overflow-hidden space-y-4">
       
-      {/* SELETOR DE BATERIA ATIVA */}
-      <div className="bg-[#111] border border-gray-800 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="flex items-center gap-3">
-          <Layers className="text-red-500 shrink-0" size={22} />
-          <div className="flex flex-col">
-            <span className="text-xs uppercase font-bold text-gray-400">Controle de Corrida Ativa</span>
-            <span className="text-[11px] text-gray-500">Selecione a bateria do cronograma para alinhar o grid automaticamente</span>
-          </div>
-        </div>
-
-        <div className="w-full sm:w-72">
-          <select
-            value={bateriaSelecionada}
-            onChange={(e) => setBateriaSelecionada(e.target.value)}
-            className="w-full bg-black border border-gray-800 hover:border-gray-700 rounded px-3 py-2 text-sm text-white font-semibold outline-none focus:border-red-600 cursor-pointer transition-colors"
-          >
-            <option value="" disabled>-- Escolha a Bateria --</option>
-            {listaBaterias.map((bat: any) => (
-              <option key={bat._id || bat.id} value={bat._id || bat.id} className="bg-[#111] text-white">
-                {bat.nome}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      {/* Painel do Cronômetro */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-[#111] border border-gray-800 rounded-xl p-6 items-center">
-        <div className="flex flex-col">
-          <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">Status da Bateria</span>
-          <div className="flex items-center gap-2 mt-1">
-            <span className={`w-2.5 h-2.5 rounded-full ${cronometroAtivo ? 'bg-green-500 animate-ping' : 'bg-amber-500'}`} />
-            <h2 className="text-sm font-bold tracking-wide">{cronometroAtivo ? 'CORRIDA EM ANDAMENTO' : 'PISTA EM PAUSA'}</h2>
-          </div>
-        </div>
-
-        <div className="text-center">
-          <h1 className="text-5xl font-black font-mono tracking-tight text-red-500 bg-black py-2 px-4 rounded-lg border border-gray-900 inline-block">
-            {formatarTempoCrono(tempoDecorrido)}
-          </h1>
-        </div>
-
-        <div className="flex justify-end gap-3">
-          <button 
-            type="button"
-            onClick={() => setCronometroAtivo(!cronometroAtivo)}
-            disabled={pilotos.length === 0}
-            className={`flex items-center gap-2 px-5 py-3 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-lg disabled:opacity-20 disabled:pointer-events-none ${
-              cronometroAtivo ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
-            }`}
-          >
-            {cronometroAtivo ? <Pause size={16} /> : <Play size={16} />}
-            {cronometroAtivo ? 'Pausar' : 'Dar Largada'}
-          </button>
-          
-          <button
-            type="button"
-            onClick={finalizarCorridaOficial}
-            disabled={pilotos.length === 0 || tempoDecorrido === 0}
-            className="bg-red-600 hover:bg-red-700 text-white font-bold px-4 py-3 rounded-lg text-xs uppercase tracking-wider disabled:opacity-20 transition-all shadow-lg"
-          >
-            Finalizar Prova
-          </button>
-          
-          <button
-            type="button"
-            onClick={() => setModalAberto(true)}
-            disabled={!bateriaSelecionada}
-            className="bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white font-bold px-4 py-2 rounded text-xs uppercase tracking-wider transition-colors"
-          >
-            + Incluir Piloto
-          </button>
+      {/* ================= SEÇÃO ESTÁTICA DO TOPO ================= */}
+      <div className="shrink-0 space-y-4">
         
-          <button 
-            type="button"
-            onClick={() => { if(confirm('Zerar cronômetro atual?')) setTempoDecorrido(0); setCronometroAtivo(false); }}
-            className="p-3 bg-gray-900 border border-gray-800 hover:text-red-500 rounded-lg text-gray-400 transition-colors"
-          >
-            <RotateCcw size={16} />
-          </button>
-        </div>
-      </div>
+        {/* SELETOR DE BATERIA ATIVA */}
+        <div className="bg-[#111] border border-gray-800 rounded-xl p-4 flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <Layers className="text-red-500 shrink-0" size={22} />
+            <div className="flex flex-col">
+              <span className="text-xs uppercase font-bold text-gray-400">Controle de Corrida Ativa</span>
+              <span className="text-[11px] text-gray-500">Selecione a bateria do cronograma para alinhar o grid automaticamente</span>
+            </div>
+          </div>
 
-      {/* Contingência Manual */}
-      <div className="bg-[#111] border border-gray-800 rounded-xl p-4 flex items-center justify-between gap-4">
-        <div className="flex items-center gap-3 text-gray-400">
-          <Keyboard size={20} className="text-red-500" />
-          <div className="flex flex-col">
-            <span className="text-xs text-white font-bold uppercase">Contingência Manual</span>
-            <span className="text-[11px] text-gray-500">Digite o número da moto caso o transponder falhe na antena</span>
+          <div className="w-full sm:w-72">
+            <select
+              value={bateriaSelecionada}
+              onChange={(e) => setBateriaSelecionada(e.target.value)}
+              className="w-full bg-black border border-gray-800 hover:border-gray-700 rounded px-3 py-2 text-sm text-white font-semibold outline-none focus:border-red-600 cursor-pointer transition-colors"
+            >
+              <option value="" disabled>-- Escolha a Bateria --</option>
+              {listaBaterias.map((bat: any) => (
+                <option key={bat._id || bat.id} value={bat._id || bat.id} className="bg-[#111] text-white">
+                  {bat.nome}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
-        <div className="flex gap-2 max-w-xs w-full">
-          <input 
-            type="text"
-            value={inputManual}
-            disabled={!cronometroAtivo}
-            onChange={e => setInputManual(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && registrarVoltaPiloto(inputManual, 'MANUAL')}
-            placeholder="Nº Moto"
-            className="bg-black border border-gray-800 disabled:opacity-30 rounded px-3 py-1.5 text-white font-mono font-bold focus:border-red-600 outline-none w-full text-center text-base"
-          />
-          <button 
-            type="button"
-            onClick={() => registrarVoltaPiloto(inputManual, 'MANUAL')}
-            disabled={!cronometroAtivo}
-            className="bg-red-600 hover:bg-red-700 disabled:opacity-30 text-white font-bold px-4 rounded text-xs tracking-wider uppercase"
-          >
-            Ok
-          </button>
+
+        {/* Painel do Cronômetro */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 bg-[#111] border border-gray-800 rounded-xl p-4 items-center">
+          <div className="flex flex-col">
+            <span className="text-xs uppercase tracking-wider text-gray-500 font-bold">Status da Bateria</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className={`w-2.5 h-2.5 rounded-full ${cronometroAtivo ? 'bg-green-500 animate-ping' : 'bg-amber-500'}`} />
+              <h2 className="text-sm font-bold tracking-wide">{cronometroAtivo ? 'CORRIDA EM ANDAMENTO' : 'PISTA EM PAUSA'}</h2>
+            </div>
+          </div>
+
+          <div className="text-center">
+            <h1 className="text-4xl font-black font-mono tracking-tight text-red-500 bg-black py-1 px-4 rounded-lg border border-gray-900 inline-block">
+              {formatarTempoCrono(tempoDecorrido)}
+            </h1>
+          </div>
+
+          <div className="flex justify-end gap-2 flex-wrap">
+            <button 
+              type="button"
+              onClick={() => setCronometroAtivo(!cronometroAtivo)}
+              disabled={pilotos.length === 0}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-bold uppercase tracking-wider transition-all shadow-lg disabled:opacity-20 disabled:pointer-events-none ${
+                cronometroAtivo ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-green-600 hover:bg-green-700 text-white'
+              }`}
+            >
+              {cronometroAtivo ? <Pause size={14} /> : <Play size={14} />}
+              {cronometroAtivo ? 'Pausar' : 'Dar Largada'}
+            </button>
+            
+            <button
+              type="button"
+              onClick={finalizarCorridaOficial}
+              disabled={pilotos.length === 0 || tempoDecorrido === 0}
+              className="bg-red-600 hover:bg-red-700 text-white font-bold px-3 py-2 rounded-lg text-xs uppercase tracking-wider disabled:opacity-20 transition-all shadow-lg"
+            >
+              Finalizar Prova
+            </button>
+            
+            <button
+              type="button"
+              onClick={() => setModalAberto(true)}
+              disabled={!bateriaSelecionada}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-30 text-white font-bold px-3 py-2 rounded text-xs uppercase tracking-wider transition-colors"
+            >
+              + Incluir Piloto
+            </button>
+          
+            <button 
+              type="button"
+              onClick={() => { if(confirm('Zerar cronômetro atual?')) setTempoDecorrido(0); setCronometroAtivo(false); }}
+              className="p-2 bg-gray-900 border border-gray-800 hover:text-red-500 rounded-lg text-gray-400 transition-colors"
+            >
+              <RotateCcw size={14} />
+            </button>
+          </div>
         </div>
+
+        {/* Contingência Manual - SEMPRE FIXO NO COMPORTAMENTO VISUAL */}
+        <div className="bg-[#111] border border-gray-800 rounded-xl p-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 text-gray-400">
+            <Keyboard size={20} className="text-red-500" />
+            <div className="flex flex-col">
+              <span className="text-xs text-white font-bold uppercase">Contingência Manual</span>
+              <span className="text-[11px] text-gray-500">Digite o número da moto caso o transponder falhe na antena</span>
+            </div>
+          </div>
+          <div className="flex gap-2 max-w-xs w-full">
+            <input 
+              type="text"
+              value={inputManual}
+              disabled={!cronometroAtivo}
+              onChange={e => setInputManual(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && registrarVoltaPiloto(inputManual, 'MANUAL')}
+              placeholder="Nº Moto"
+              className="bg-black border border-gray-800 disabled:opacity-30 rounded px-3 py-1.5 text-white font-mono font-bold focus:border-red-600 outline-none w-full text-center text-base"
+            />
+            <button 
+              type="button"
+              onClick={() => registrarVoltaPiloto(inputManual, 'MANUAL')}
+              disabled={!cronometroAtivo}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-30 text-white font-bold px-4 rounded text-xs tracking-wider uppercase"
+            >
+              Ok
+            </button>
+          </div>
+        </div>
+
       </div>
 
-      {/* Grid Principal ou Estado Vazio */}
-      {loadingPilotos ? (
-        <div className="p-12 text-center text-sm text-gray-500 font-medium">Alinhando grid de pilotos da bateria...</div>
-      ) : pilotos.length === 0 ? (
-        <div className="p-12 text-center border border-dashed border-gray-800 rounded-xl bg-[#111] text-gray-500 text-sm font-medium flex flex-col items-center gap-2">
-          <ShieldAlert size={24} className="text-gray-600" />
-          Nenhum competidor vinculado às categorias desta bateria ou nenhuma bateria selecionada.
-        </div>
-      ) : (
-        <div className="bg-[#111] border border-gray-800 rounded-xl overflow-hidden shadow-xl">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="border-b border-gray-800 bg-[#161616] text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                  <th className="py-4 px-4 text-center w-16">Pos</th>
-                  <th className="py-4 px-6 text-center w-24">Nº Moto</th>
-                  <th className="py-4 px-6">Piloto / Categoria</th>
-                  <th className="py-4 px-6 text-center w-28">Voltas</th>
-                  <th className="py-4 px-6 text-center w-40">Melhor Volta</th>
-                  <th className="py-4 px-6">Histórico Passo a Passo (3 Casas Decimais)</th>
-                  <th className="py-4 px-6 text-right w-24">Ações</th>
+      {/* ================= SEÇÃO DE LISTAGEM COM ROLAGEM EXCLUSIVA ================= */}
+      <div className="flex-1 min-h-0 bg-[#111] border border-gray-800 rounded-xl overflow-y-auto shadow-xl scrollbar-thin">
+        {loadingPilotos ? (
+          <div className="p-12 text-center text-sm text-gray-500 font-medium">Alinhando grid de pilotos da bateria...</div>
+        ) : pilotos.length === 0 ? (
+          <div className="h-full min-h-[200px] flex flex-col items-center justify-center text-center p-6 text-gray-500 text-sm font-medium gap-2">
+            <ShieldAlert size={24} className="text-gray-600" />
+            Nenhum competidor vinculado às categorias desta bateria ou nenhuma bateria selecionada.
+          </div>
+        ) : (
+          <div className="overflow-x-auto h-full">
+            <table className="w-full text-left border-collapse relative">
+              
+              {/* 👇 O segredo está no 'sticky top-0' e no 'z-20' com fundo sólido */}
+              <thead className="sticky top-0 z-20 bg-[#161616] border-b border-gray-800 shadow-md">
+                <tr className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                  <th className="py-3 px-4 text-center w-16 bg-[#161616]">Pos</th>
+                  <th className="py-3 px-6 text-center w-24 bg-[#161616]">Nº Moto</th>
+                  <th className="py-3 px-6 bg-[#161616]">Piloto / Categoria</th>
+                  <th className="py-3 px-6 text-center w-28 bg-[#161616]">Voltas</th>
+                  <th className="py-3 px-6 text-center w-40 bg-[#161616]">Melhor Volta</th>
+                  <th className="py-3 px-6 bg-[#161616]">Histórico Passo a Passo (3 Casas Decimais)</th>
+                  <th className="py-3 px-6 text-right w-24 bg-[#161616]">Ações</th>
                 </tr>
               </thead>
+              
               <tbody className="divide-y divide-gray-800 text-sm font-mono">
                 {pilotos.map((piloto, index) => {
                   const totalVoltas = piloto.voltas.length;
@@ -453,26 +459,26 @@ export default function CronometragemPage() {
 
                   return (
                     <tr key={piloto.id} className={`transition-colors ${rowStyle}`}>
-                      <td className={`py-4 px-4 text-center font-black ${ehLider ? 'text-yellow-400 text-base' : 'text-gray-500'}`}>
+                      <td className={`py-3 px-4 text-center font-black ${ehLider ? 'text-yellow-400 text-base' : 'text-gray-500'}`}>
                         {totalVoltas > 0 ? `P${index + 1}` : '-'}
                       </td>
                       
-                      <td className="py-4 px-6 text-center text-lg font-black text-red-500 bg-black/20">{piloto.numero}</td>
-                      <td className="py-4 px-6 font-sans">
+                      <td className="py-3 px-6 text-center text-lg font-black text-red-500 bg-black/20">{piloto.numero}</td>
+                      <td className="py-3 px-6 font-sans">
                         <div className="flex flex-col">
                           <span className="font-bold text-white uppercase">{piloto.nome}</span>
                           <span className="text-[10px] text-gray-500 font-bold uppercase tracking-wider mt-0.5">{piloto.categoria}</span>
                         </div>
                       </td>
-                      <td className="py-4 px-6 text-center text-base font-bold text-gray-300">{totalVoltas}</td>
-                      <td className="py-4 px-6 text-center font-bold text-green-400">
+                      <td className="py-3 px-6 text-center text-base font-bold text-gray-300">{totalVoltas}</td>
+                      <td className="py-3 px-6 text-center font-bold text-green-400">
                         {melhorVolta > 0 ? formatarTempoCrono(melhorVolta) : '--:--.---'}
                       </td>
                       
-                      <td className="py-4 px-6 font-sans">
+                      <td className="py-3 px-6 font-sans">
                         <div className="flex flex-wrap gap-1.5 max-w-xl">
                           {piloto.voltas.map((tempo, idx) => (
-                            <div key={idx} className="flex items-center gap-1 bg-black/60 border border-gray-800 px-2 py-1 rounded text-xs">
+                            <div key={idx} className="flex items-center gap-1 bg-black/60 border border-gray-800 px-2 py-0.5 rounded text-xs">
                               <span className="text-[10px] text-gray-500 font-bold">V{idx + 1}:</span>
                               {editingVolta?.pilotoId === piloto.id && editingVolta?.index === idx ? (
                                 <input 
@@ -498,7 +504,7 @@ export default function CronometragemPage() {
                         </div>
                       </td>
 
-                      <td className="py-4 px-6 text-right font-sans">
+                      <td className="py-3 px-6 text-right font-sans">
                         <button 
                           type="button"
                           onClick={() => excluirPrimeiraVolta(piloto.id)}
@@ -514,10 +520,10 @@ export default function CronometragemPage() {
               </tbody>
             </table>
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* 👇 🔥 CHAMADA COMPACTA E REUTILIZÁVEL DO SEU MODAL OFICIAL */}
+      {/* CHAMADA DO MODAL REUTILIZÁVEL */}
       <ModalCadastroPiloto
         isOpen={modalAberto}
         onClose={() => setModalAberto(false)}

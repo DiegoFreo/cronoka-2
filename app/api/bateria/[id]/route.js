@@ -1,35 +1,38 @@
+// app/api/bateria/[id]/route.ts
 import { NextResponse } from "next/server";
 import conectDB from "@/app/lib/mongodb";
 import Bateria from "@/app/model/bateria";
 import Piloto from "@/app/model/piloto";
 
-export async function GET(request, { params }) {
+export async function GET( request, { params }) {
   try {
     await conectDB();
-    const { id } = params; // ID da Bateria ou da Etapa atual
+    
+    // Aguarda o params resolver (necessário nas versões mais recentes do Next.js)
+    const { id } = await params; 
 
-    // 1. Busca os dados da bateria para saber quais categorias correm nela
+    // 1. Busca a bateria e popula as categorias vinculadas a ela
     const bateria = await Bateria.findById(id).populate('categorias');
     if (!bateria) {
       return NextResponse.json({ error: "Bateria não encontrada" }, { status: 404 });
     }
 
-    // Extrai os IDs das categorias que fazem parte desta bateria
-    // Ex: Se na bateria corre MX1 e sub-23 juntas, pegamos o ID de ambas
-    const idsCategoriasBateria = bateria.categorias.map(c => c._id);
+    // Extrai os IDs das categorias desta bateria
+    const idsCategoriasBateria = bateria.categorias.map((c) => c._id);
 
-    // 2. ✨ CORREÇÃO CRÍTICA: Busca os pilotos que possuem QUALQUER uma dessas categorias no array
+    // 2. Busca os pilotos que pertencem a QUALQUER uma dessas categorias
     const pilotosDaCorrida = await Piloto.find({
       categorias: { $in: idsCategoriasBateria }
-    }).populate('categorias', 'nome cor');
+    }).populate('categorias');
 
-    // Retorna a estrutura montada para o front-end
+    // Retorna exatamente a estrutura que o Front-end espera
     return NextResponse.json({
       bateria,
       pilotos: pilotosDaCorrida
     });
 
   } catch (error) {
+    console.error("Erro interno na API de bateria:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

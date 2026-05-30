@@ -11,7 +11,6 @@ export default function adminPage() {
   const [countCategoria, setCountCategoria] = useState(0);
   const [countBateria, setCountBateria] = useState(0);
   const [countChip, setCountChip] = useState(0);
-  const [countEvento, setCountEvento] = useState(0);
   const [totalAno, setTotalAno] = useState(0);
   const [totalMes, setTotalMes] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -23,7 +22,6 @@ export default function adminPage() {
     countBaterias();
     countChips();
     fethEventos();
-    //countEventos();
   },[]);
 
   /*
