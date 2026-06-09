@@ -7,9 +7,11 @@ interface ModalCategoriaProps {
   onClose: () => void;
   onSuccess: () => void;
   categoriaParaEditar?: any;
+  eventoId: string | null; // 🌟 Já estava mapeado corretamente na Interface
 }
 
-export function ModalCadastroCategoria({ isOpen, onClose, onSuccess, categoriaParaEditar }: ModalCategoriaProps) {
+// 🌟 Ajustado abaixo para capturar o 'eventoId' vindo das propriedades (props)
+export function ModalCadastroCategoria({ isOpen, onClose, onSuccess, categoriaParaEditar, eventoId }: ModalCategoriaProps) {
   const [loading, setLoading] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -46,9 +48,11 @@ export function ModalCadastroCategoria({ isOpen, onClose, onSuccess, categoriaPa
       const url = '/api/categoria';
       const method = isEditing ? 'PUT' : 'POST';
 
+      // 🌟 Injetado o eventoId no payload que vai para a rota do Backend (API)
       const payload = {
         id: categoriaParaEditar?._id,
-        nome: nomeLimpo
+        nome: nomeLimpo,
+        eventoId: eventoId // 🌟 Garante o vínculo do documento com o evento selecionado
       };
 
       const response = await fetch(url, {

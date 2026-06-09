@@ -1,43 +1,34 @@
-// middleware.ts
-import { auth } from "./auth"; // Ajuste o caminho conforme necessário
-import { NextResponse } from "next/server";
+import { NextResponse } from 'next/server';
+import type { NextRequest } from 'next/server';
 
-export default auth((req) => {
-  const isLoggedIn = !!req.auth;
-  const { pathname } = req.nextUrl;
-  const nivelUser = req.auth?.user?.nivelUser;
+export function middleware(request: NextRequest) {
+  // Exemplo de captura de cookie de sessão estruturado (Ajuste conforme seu JWT)
+  const token = request.cookies.get('sc-session-token')?.value;
+  const userRole = request.cookies.get('sc-user-role')?.value; // 'admin' | 'secretaria' | 'cronometrista'
 
-  // 1. Proteção de Rota (Autenticação)
-  if (!isLoggedIn && pathname !== "/login") {
-    console.log("Usuário não autenticado, redirecionando para /login");
-    return NextResponse.redirect(new URL("/login", req.url));
+  const { pathname } = request.nextUrl;
+
+  // Se tentar acessar o painel restrito sem token, manda pro Login
+  if (!token && (pathname.startsWith('/admin') || pathname.startsWith('/secretaria') || pathname.startsWith('/cronometrista'))) {
+    return NextResponse.redirect(new URL('/login', request.url));
   }
 
-  // Se o usuário já está logado e tenta ir para o login, joga ele para uma rota inicial
-  if (isLoggedIn && pathname === "/login") {
-    return NextResponse.redirect(new URL("/", req.url)); // Ou mude para a lógica de níveis se preferir
+  // Validação rígida de permissão por rota
+  if (pathname.startsWith('/admin') && userRole !== 'admin') {
+    return NextResponse.redirect(new URL('/login?error=negado', request.url));
   }
 
-  // 2. Proteção por Role (RBAC) - CORRIGIDO: Redireciona para fora da rota protegida
-  if (pathname.startsWith("/admin") && nivelUser !== "A") {
-    console.log("Acesso negado à rota /admin");
-    return NextResponse.redirect(new URL("/login?error=AccessDenied", req.url)); 
+  if (pathname.startsWith('/secretaria') && userRole !== 'secretaria' && userRole !== 'admin') {
+    return NextResponse.redirect(new URL('/login?error=negado', request.url));
   }
 
-  if (pathname.startsWith("/secretaria") && !(nivelUser === "S" || nivelUser === "A")) {
-    console.log("Acesso negado à rota /secretaria");
-    return NextResponse.redirect(new URL("/login?error=AccessDenied", req.url));
-  }
-
-  if (pathname.startsWith("/cronometragem") && !(nivelUser === "C" || nivelUser === "A")) {
-    console.log("Acesso negado à rota /cronometragem");
-    return NextResponse.redirect(new URL("/login?error=AccessDenied", req.url));
+  if (pathname.startsWith('/cronometrista') && userRole !== 'cronometrista' && userRole !== 'admin') {
+    return NextResponse.redirect(new URL('/login?error=negado', request.url));
   }
 
   return NextResponse.next();
-});
+}
 
-// Importante: O matcher define onde o middleware atua
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|transmissao).*)"],
+  matcher: ['/admin/:path*', '/secretaria/:path*', '/cronometrista/:path*'],
 };

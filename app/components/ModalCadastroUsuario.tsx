@@ -14,21 +14,21 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   
-  // Estados do formulário
+  // Estados do formulário sincronizados com seu modelo de dados
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [senha, setSenha] = useState('');
-  const [nivelAcesso, setNivelAcesso] = useState('operador');
+  const [nivelAcesso, setNivelAcesso] = useState('C'); 
 
   const isEditing = !!usuarioParaEditar; 
 
-  // Monitora a abertura e preenche caso seja edição
+  // Monitora a abertura para preencher caso seja edição
   useEffect(() => {
     if (usuarioParaEditar && isOpen) {
       setNome(usuarioParaEditar.nameUser || '');
       setEmail(usuarioParaEditar.emailUser || '');
-      setNivelAcesso(usuarioParaEditar.nivelUser || 'Cronometrista');
-      setSenha(''); // Deixa a senha em branco na edição (só muda se digitar)
+      setNivelAcesso(usuarioParaEditar.nivelUser || 'C');
+      setSenha(''); 
     } else {
       limparCampos();
     }
@@ -39,7 +39,6 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
   const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Remove espaços extras antes de validar
     const emailLimpo = email ? email.trim() : "";
     const nomeLimpo = nome ? nome.trim() : "";
 
@@ -57,22 +56,20 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
     setErro(null);
 
     try {
-      const url = '/api/usuario';
+      const url = '/api/usuario'; 
       const method = isEditing ? 'PUT' : 'POST';
       
-      // Monta o payload garantindo valores padrão seguros
       const payload: any = {
         _id: usuarioParaEditar?._id,
         nameUser: nomeLimpo,
-        emailUser: emailLimpo.toLowerCase(), // Normaliza no front com segurança
+        emailUser: emailLimpo.toLowerCase(), 
         nivelUser: nivelAcesso
       };
 
-      // Só anexa a propriedade de senha se ela realmente foi digitada
       if (senha && senha.trim() !== "") {
-        payload.passworUser = senha;
+        payload.passwordUser = senha;
       } else if (!isEditing) {
-        payload.passworUser = senha;
+        payload.passwordUser = senha;
       }
 
       const response = await fetch(url, {
@@ -95,7 +92,6 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
     }
   };
 
-  // Funções declaradas de forma tradicional para evitar erros de hoisting
   function limparCampos() {
     setNome('');
     setEmail('');
@@ -112,9 +108,10 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      {/* 🎨 Estrutura e cores fiéis à imagem "inclusão usuario.png" */}
       <div className="w-full max-w-md bg-[#111] border border-gray-800 rounded-xl overflow-hidden shadow-2xl flex flex-col">
         
-        {/* Header */}
+        {/* Header com o detalhe vermelho no ícone */}
         <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-[#161616]">
           <h2 className="text-lg font-bold text-white flex items-center gap-2">
             {isEditing ? (
@@ -130,7 +127,11 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
 
         {/* Conteúdo do Formulário */}
         <div className="p-6 flex-1">
-          {erro && <div className="p-3 mb-4 text-sm bg-red-950/40 border border-red-500/30 text-red-400 rounded-lg">{erro}</div>}
+          {erro && (
+            <div className="p-3 mb-4 text-sm bg-red-950/40 border border-red-500/30 text-red-400 rounded-lg">
+              {erro}
+            </div>
+          )}
           {sucesso && (
             <div className="p-4 mb-4 text-sm bg-green-950/40 border border-green-500/30 text-green-400 rounded-lg flex items-center gap-2">
               <CheckCircle size={18} /> {sucesso}
@@ -138,7 +139,7 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
           )}
 
           <form onSubmit={handleSalvar} className="space-y-4">
-            {/* Nome */}
+            {/* Nome Completo */}
             <div className="flex flex-col gap-1">
               <label className="text-sm text-gray-400">Nome Completo *</label>
               <input 
@@ -170,7 +171,7 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
               />
             </div>
 
-            {/* Nível de Acesso */}
+            {/* Nível de Permissão */}
             <div className="flex flex-col gap-1">
               <label className="text-sm text-gray-400 flex items-center gap-1">
                 <Shield size={14} className="text-gray-500" /> Nível de Permissão
@@ -186,6 +187,7 @@ export function ModalCadastroUsuario({ isOpen, onClose, onSuccess, usuarioParaEd
               </select>
             </div>
 
+            {/* Botão Vermelho Sólido de Destaque da FPMX */}
             <button 
               type="submit" disabled={loading}
               className="w-full mt-6 bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white font-medium py-2 rounded transition-colors"
