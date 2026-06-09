@@ -2,8 +2,8 @@
 import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
-  Volume2, Play, Pause, CircleDot, UserPlus, UserCheck, 
-  Settings, FileText, CheckCircle2 
+  Volume2, Play, Pause, UserPlus, 
+  Settings, FileText 
 } from 'lucide-react';
 
 interface Evento {
@@ -31,7 +31,6 @@ interface Piloto {
   numeral: string;
   transponder: string;
   categoriasIds: string[];
-  // Campos dinâmicos de pista
   voltas?: number;
   tempoTotalMs?: number;
   melhorVoltaMs?: number;
@@ -47,11 +46,9 @@ function ConteudoCronometragem() {
 
   // Estados dos Dados Backend
   const [evento, setEvento] = useState<Evento | null>(null);
-  const [bateriaAtual, setBateriaAtual] = useState<Bateria | null>(null);
   const [todasBaterias, setTodasBaterias] = useState<Bateria[]>([]);
   const [categoriasBateria, setCategoriasBateria] = useState<Categoria[]>([]);
   const [pilotos, setPilotos] = useState<Piloto[]>([]);
-  const [loading, setLoading] = useState(true);
 
   // ENGINE DO CRONÔMETRO PROGRESSIVO
   const [tempoDecorridoMs, setTempoDecorridoMs] = useState<number>(0);
@@ -59,7 +56,7 @@ function ConteudoCronometragem() {
   const intervaloRef = useRef<NodeJS.Timeout | null>(null);
   const momentoUltimoStartRef = useRef<number>(0);
 
-  // ESTADOS DE DESEMPENHO DA PISTA (Melhor Volta Real)
+  // ESTADOS DE DESEMPENHO DA PISTA
   const [idPilotoMelhorVolta, setIdPilotoMelhorVolta] = useState<string | null>(null);
   const [tempoMelhorVoltaMs, setTempoMelhorVoltaMs] = useState<number | null>(null);
   const [numeroMotoInput, setNumeroMotoInput] = useState<string>('');
@@ -68,6 +65,7 @@ function ConteudoCronometragem() {
     if (bateriaId && eventoId) {
       carregarDadosPista(eventoId, bateriaId);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bateriaId, eventoId]);
 
   // Motor do Cronômetro
@@ -86,10 +84,9 @@ function ConteudoCronometragem() {
     return () => {
       if (intervaloRef.current) clearInterval(intervaloRef.current);
     };
-  }, [corridaAtiva]);
+  }, [corridaAtiva, tempoDecorridoMs]);
 
   const carregarDadosPista = async (idEv: string, idBat: string) => {
-    setLoading(true);
     try {
       const [resEvGeral, resBatGeral] = await Promise.all([
         fetch('/api/evento'),
@@ -127,16 +124,13 @@ function ConteudoCronometragem() {
       if (typeof dadosBat.tempoProva !== 'number') dadosBat.tempoProva = 15; 
 
       setEvento(dadosEv);
-      setBateriaAtual(dadosBat);
       
-      // Reset completo dos estados de cronometragem ao trocar bateria
       setTempoDecorridoMs(0);
       setIdPilotoMelhorVolta(null);
       setTempoMelhorVoltaMs(null);
 
       const catIdsBateria = (dadosBat.categoriesIds || []).map((id: any) => String(id._id || id));
 
-      // 2. Categorias
       const resCat = await fetch(`/api/categoria?evento=${idEv}`);
       let listaCategorias: Categoria[] = [];
       if (resCat.ok) {
@@ -148,7 +142,6 @@ function ConteudoCronometragem() {
       }
       setCategoriasBateria(listaCategorias);
 
-      // 3. Pilotos (Iniciando zerados para a corrida)
       const resPil = await fetch(`/api/piloto?evento=${idEv}`);
       if (resPil.ok) {
         const todosPilotos = await resPil.json();
@@ -160,7 +153,6 @@ function ConteudoCronometragem() {
 
           const listaBase = pilotosFiltrados.length > 0 ? pilotosFiltrados : todosPilotos;
           
-          // Injeta estrutura de corrida limpa em cada piloto
           const pilotosProntos = listaBase.map(p => ({
             ...p,
             voltas: 0,
@@ -175,12 +167,9 @@ function ConteudoCronometragem() {
 
     } catch (err) {
       console.error("Erro geral de sincronização:", err);
-    } finally {
-      setLoading(false);
     }
   };
 
-  // FUNÇÃO SIMULADORA DE PASSAGEM DE PILOTO (Para teste em bancada via input de Moto)
   const registrarPassagemPiloto = (numeralMoto: string) => {
     if (!corridaAtiva) {
       alert("Dê a largada na prova antes de passar as motos!");
@@ -194,21 +183,17 @@ function ConteudoCronometragem() {
       let novaMelhorVoltaMundial = tempoMelhorVoltaMs;
       let idDonoDaMelhorVolta = idPilotoMelhorVolta;
 
-      const listaAtualizada = pilotosAtuais.map(p => {
+      const listaGridAtualizado = pilotosAtuais.map(p => {
         if (String(p.numeral) === motoLimpa) {
           const voltasAtuais = (p.voltas || 0) + 1;
-          
-          // Calcula tempo desta volta específica baseado no tempo atual do cronômetro
           const momentoAnterior = p.ultimaPassagemMs || 0;
           const tempoDestaVolta = tempoDecorridoMs - momentoAnterior;
 
-          // Valida se é a menor volta do piloto
           const menorVoltaAnterior = p.melhorVoltaMs || 0;
           const novaMelhorVoltaPiloto = (menorVoltaAnterior === 0 || tempoDestaVolta < menorVoltaAnterior) 
             ? tempoDestaVolta 
             : menorVoltaAnterior;
 
-          // Verifica se essa volta bateu o recorde absoluto da bateria inteira
           if (novaMelhorVoltaMundial === null || tempoDestaVolta < novaMelhorVoltaMundial) {
             novaMelhorVoltaMundial = tempoDestaVolta;
             idDonoDaMelhorVolta = p._id;
@@ -225,30 +210,23 @@ function ConteudoCronometragem() {
         return p;
       });
 
-      // Atualiza os estados globais dos cards do topo
       if (idDonoDaMelhorVolta) setIdPilotoMelhorVolta(idDonoDaMelhorVolta);
       if (novaMelhorVoltaMundial) setTempoMelhorVoltaMs(novaMelhorVoltaMundial);
 
-      // Reordena o Grid: Quem tem mais voltas fica na frente. Se empatar em voltas, quem terminou a última primeiro fica na frente
-      return listaGridOrdenado(listaAtualizada);
+      return [...listaGridAtualizado].sort((a, b) => {
+        const vA = a.voltas || 0;
+        const vB = b.voltas || 0;
+        if (vB !== vA) return vB - vA;
+        
+        const tA = a.tempoTotalMs || 0;
+        const tB = b.tempoTotalMs || 0;
+        return tA - tB;
+      });
     });
 
-    setNumeroMotoInput(''); // Limpa campo de texto
+    setNumeroMotoInput('');
   };
 
-  const listaGridOrdenado = (lista: Piloto[]) => {
-    return [...lista].sort((a, b) => {
-      const vA = a.voltas || 0;
-      const vB = b.voltas || 0;
-      if (vB !== vA) return vB - vA; // Mais voltas primeiro
-      
-      const tA = a.tempoTotalMs || 0;
-      const tB = b.tempoTotalMs || 0;
-      return tA - tB; // Menor tempo total de pista decide empate
-    });
-  };
-
-  // Formatadores de Tempo para Visualização Profissional
   const formatarMilenios = (totalMs: number) => {
     const minutos = Math.floor(totalMs / 60000);
     const segundos = Math.floor((totalMs % 60000) / 1000);
@@ -270,8 +248,14 @@ function ConteudoCronometragem() {
     router.push(`/admin/corrida?eventoId=${eventoId}&bateriaId=${novaBateriaId}`);
   };
 
-  // Localiza objeto do piloto recordista para printar o nome real no topo
   const pilotoRecordista = pilotos.find(p => p._id === idPilotoMelhorVolta);
+
+  // Formata o nome de forma segura para evitar erros de split de undefined
+  const obterNomeRecordistaFormatado = () => {
+    if (!pilotoRecordista || !pilotoRecordista.nome) return "---";
+    const partes = pilotoRecordista.nome.split(' ');
+    return `${partes[0]} ${partes[1] || ''}`.trim();
+  };
 
   const textoCategoriasTopo = categoriasBateria.length > 0 
     ? categoriasBateria.map(c => c.nome).join(' - ')
@@ -280,10 +264,8 @@ function ConteudoCronometragem() {
   return (
     <div className="h-screen w-screen bg-[#050505] text-zinc-100 font-sans antialiased flex p-4 gap-4 overflow-hidden select-none">
       
-      {/* PAINEL CENTRAL DE CRONOMETRAGEM */}
       <main className="flex-1 flex flex-col gap-4">
         
-        {/* CABEÇALHO DA PROVA */}
         <div className="text-center py-2 relative">
           <div className="absolute left-0 top-1/2 -translate-y-1/2 w-24 h-[2px] bg-gradient-to-r from-transparent to-red-600"></div>
           <h1 className="text-3xl font-black tracking-widest text-white uppercase font-sans">
@@ -295,7 +277,6 @@ function ConteudoCronometragem() {
           <div className="absolute right-0 top-1/2 -translate-y-1/2 w-24 h-[2px] bg-gradient-to-l from-transparent to-red-600"></div>
         </div>
 
-        {/* CARDS SUPERIORES DE MÉTRICAS */}
         <div className="grid grid-cols-3 gap-4">
           <div className="bg-[#0b0b0c] border border-zinc-900/60 rounded-xl p-4 text-center flex flex-col justify-center min-h-[90px]">
             <p className="text-[10px] font-mono font-black text-zinc-500 tracking-wider uppercase flex items-center justify-center gap-1.5">
@@ -320,12 +301,11 @@ function ConteudoCronometragem() {
               🚩 PILOTO COM A MELHOR VOLTA:
             </p>
             <p className="text-xl font-black font-sans text-white mt-1 tracking-wide uppercase">
-              {pilotoRecordista ? pilotoRecordista.nome.split(' ')[0] + ' ' + (pilotoRecordista.nome.split(' ')[1] || '') : "---"}
+              {obterNomeRecordistaFormatado()}
             </p>
           </div>
         </div>
 
-        {/* TABELA PRINCIPAL DE POSIÇÕES */}
         <div className="flex-1 bg-[#0b0b0c] border border-zinc-900/60 rounded-xl overflow-hidden flex flex-col">
           <div className="grid grid-cols-12 bg-[#080809] border-b border-zinc-900/80 px-4 py-2.5 text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-wider text-center">
             <div className="col-span-1 text-left">POS.</div>
@@ -350,7 +330,6 @@ function ConteudoCronometragem() {
                 const corBordaNumeral = index === 0 ? 'border-cyan-500 text-cyan-400 bg-cyan-950/20' : 'border-purple-500 text-purple-400 bg-purple-950/20';
                 const corPontos = index === 0 || index === 1 ? 'text-emerald-500' : 'text-zinc-400';
 
-                // Calcula diferença de tempo para o líder do grid
                 let diferencaTexto = "0.00";
                 if (index > 0 && p.tempoTotalMs && pilotos[0].tempoTotalMs) {
                   const diff = (p.tempoTotalMs - pilotos[0].tempoTotalMs) / 1000;
@@ -358,7 +337,7 @@ function ConteudoCronometragem() {
                 }
 
                 return (
-                  <div key={p._id} className="grid grid-cols-12 items-center py-3 text-xs font-mono font-bold text-center text-zinc-300 hover:bg-zinc-900/20 transition-colors">
+                  <div key={p._id || `piloto-${index}`} className="grid grid-cols-12 items-center py-3 text-xs font-mono font-bold text-center text-zinc-300 hover:bg-zinc-900/20 transition-colors">
                     <div className="col-span-1 text-left text-zinc-500 text-sm pl-1">{index + 1}</div>
                     
                     <div className="col-span-3 text-left flex items-center gap-2">
@@ -393,7 +372,6 @@ function ConteudoCronometragem() {
           </div>
         </div>
 
-        {/* RODAPÉ */}
         <div className="flex justify-between items-center text-[10px] font-mono font-bold text-zinc-600 tracking-wider uppercase shrink-0 px-1">
           <span>SISTEMA DE CRONOMETRAGEM SC</span>
           <span className="text-emerald-500 flex items-center gap-1.5">
@@ -403,7 +381,6 @@ function ConteudoCronometragem() {
         </div>
       </main>
 
-      {/* CONTROLES LATERAIS (MENU DIREITO) */}
       <aside className="w-[280px] bg-[#0b0b0c] border border-zinc-900/80 rounded-xl p-4 flex flex-col gap-2.5 shrink-0">
         
         <button className="w-full bg-[#121214] hover:bg-zinc-800 text-zinc-400 hover:text-white font-mono font-bold text-xs py-3 px-4 rounded-xl border border-zinc-900 transition-all flex items-center justify-center gap-2 uppercase tracking-wide">
@@ -453,7 +430,6 @@ function ConteudoCronometragem() {
           <FileText size={15} className="text-zinc-500" /> Relatório
         </button>
 
-        {/* INPUT SIMULADOR DE MOTO / PASSAGEM RFID */}
         <div className="mt-auto pt-4 border-t border-zinc-900 space-y-2">
           <label className="text-[10px] font-mono font-black text-zinc-500 tracking-wider uppercase block">
             ⬜ SIMULAR PASSAGEM DE MOTO
@@ -476,7 +452,6 @@ function ConteudoCronometragem() {
           </div>
         </div>
 
-        {/* SELETOR DE BATERIA */}
         <div className="space-y-1">
           <select 
             onChange={(e) => lidarMudancaBateria(e.target.value)}
