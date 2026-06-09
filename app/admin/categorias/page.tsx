@@ -3,6 +3,7 @@ import React, { useState, useEffect } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Edit2, Trash2, Plus, Layers, ArrowLeft } from "lucide-react";
 import { ModalCadastroCategoria } from "@/app/components/ModalCadastroCategoria";
+export const dynamic = 'force-dynamic';
 
 // 🌟 Tipagem inline para eliminar dependências de pastas de tipos deletadas
 interface Categoria {
