@@ -3,7 +3,7 @@ import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   Volume2, Play, Pause, UserPlus, 
-  Settings, FileText 
+  Settings, FileText, ArrowLeft, Loader2 
 } from 'lucide-react';
 
 interface Evento {
@@ -12,17 +12,17 @@ interface Evento {
   local: string;
 }
 
+interface Categoria {
+  _id: string;
+  nome: string;
+}
+
 interface Bateria {
   _id: string;
   nome: string;
   tempoProva: number;
   voltasExtras: number;
-  categoriesIds: string[];
-}
-
-interface Categoria {
-  _id: string;
-  nome: string;
+  categoriaId?: string[] | Categoria[] | any;
 }
 
 interface Piloto {
@@ -30,11 +30,13 @@ interface Piloto {
   nome: string;
   numeral: string;
   transponder: string;
-  categoriasIds: string[];
+  categoriasIds: string[] | Categoria[] | any;
   voltas?: number;
   tempoTotalMs?: number;
   melhorVoltaMs?: number;
   ultimaPassagemMs?: number;
+  ultimaVoltaMs?: number;     
+  historicoVoltas?: number[]; 
 }
 
 function ConteudoCronometragem() {
@@ -43,6 +45,7 @@ function ConteudoCronometragem() {
   
   const bateriaId = searchParams.get('bateriaId');
   const eventoId = searchParams.get('eventoId');
+  const origem = searchParams.get('origem');
 
   // Estados dos Dados Backend
   const [evento, setEvento] = useState<Evento | null>(null);
@@ -60,6 +63,9 @@ function ConteudoCronometragem() {
   const [idPilotoMelhorVolta, setIdPilotoMelhorVolta] = useState<string | null>(null);
   const [tempoMelhorVoltaMs, setTempoMelhorVoltaMs] = useState<number | null>(null);
   const [numeroMotoInput, setNumeroMotoInput] = useState<string>('');
+  
+  // Estado para travar o clique duplo ao salvar
+  const [salvando, setSalvando] = useState(false);
 
   useEffect(() => {
     if (bateriaId && eventoId) {
@@ -68,7 +74,7 @@ function ConteudoCronometragem() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bateriaId, eventoId]);
 
-  // Motor do Cronômetro
+  // Motor do Cronômetro Local (Frontend)
   useEffect(() => {
     if (corridaAtiva) {
       momentoUltimoStartRef.current = Date.now() - tempoDecorridoMs;
@@ -85,6 +91,71 @@ function ConteudoCronometragem() {
       if (intervaloRef.current) clearInterval(intervaloRef.current);
     };
   }, [corridaAtiva, tempoDecorridoMs]);
+
+  // 🔄 1. SYNC BACKEND: Polling com mesclagem inteligente de dados locais
+  useEffect(() => {
+    let pollingInterval: NodeJS.Timeout | null = null;
+
+    if (corridaAtiva && bateriaId) {
+      pollingInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/resultados?bateriaId=${bateriaId}`);
+          if (res.ok) {
+            const dadosCorrida = await res.json();
+            
+            if (dadosCorrida && dadosCorrida.gridFinal && dadosCorrida.gridFinal.length > 0) {
+              
+              if (dadosCorrida.melhorVoltaDaProvaMs) setTempoMelhorVoltaMs(dadosCorrida.melhorVoltaDaProvaMs);
+              if (dadosCorrida.idPilotoMelhorVolta) setIdPilotoMelhorVolta(dadosCorrida.idPilotoMelhorVolta);
+
+              setPilotos((pilotosLocais) => {
+                const atualizados = dadosCorrida.gridFinal.map((pRemoto: any) => {
+                  const localMatch = pilotosLocais.find(pl => pl._id === pRemoto.pilotoId);
+                  const usaLocal = localMatch && (localMatch.voltas || 0) > (pRemoto.voltas || 0);
+
+                  return {
+                    ...localMatch,
+                    _id: pRemoto.pilotoId,
+                    nome: pRemoto.nome,
+                    numeral: pRemoto.numeral,
+                    voltas: usaLocal ? localMatch.voltas : pRemoto.voltas,
+                    tempoTotalMs: usaLocal ? localMatch.tempoTotalMs : pRemoto.tempoTotalMs,
+                    melhorVoltaMs: usaLocal ? localMatch.melhorVoltaMs : pRemoto.melhorVoltaMs,
+                    historicoVoltas: usaLocal ? localMatch.historicoVoltas : (pRemoto.historicoVoltas || []),
+                    categoriasIds: localMatch?.categoriasIds || []
+                  };
+                });
+
+                pilotosLocais.forEach(pl => {
+                  const existeNoRemoto = dadosCorrida.gridFinal.some((pr: any) => pr.pilotoId === pl._id);
+                  if (!existeNoRemoto) {
+                    atualizados.push(pl);
+                  }
+                });
+
+                return updatedSort(atualizados);
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Erro no sincronismo do live-timing:", error);
+        }
+      }, 1500);
+    }
+
+    return () => {
+      if (pollingInterval) clearInterval(pollingInterval);
+    };
+  }, [corridaAtiva, bateriaId]);
+
+  const updatedSort = (lista: Piloto[]) => {
+    return [...lista].sort((a, b) => {
+      const vA = a.voltas || 0;
+      const vB = b.voltas || 0;
+      if (vB !== vA) return vB - vA;
+      return (a.tempoTotalMs || 0) - (b.tempoTotalMs || 0);
+    });
+  };
 
   const carregarDadosPista = async (idEv: string, idBat: string) => {
     try {
@@ -119,17 +190,22 @@ function ConteudoCronometragem() {
       }
 
       if (!dadosEv) dadosEv = { _id: idEv, nome: "GP MOTOCROSS", local: "Pista Oficial" };
-      if (!dadosBat) dadosBat = { _id: idBat, nome: "1ª BATERIA", tempoProva: 15, voltasExtras: 2, categoriesIds: [] };
+      if (!dadosBat) dadosBat = { _id: idBat, nome: "1ª BATERIA", tempoProva: 15, voltasExtras: 2 };
 
       if (typeof dadosBat.tempoProva !== 'number') dadosBat.tempoProva = 15; 
 
       setEvento(dadosEv);
-      
       setTempoDecorridoMs(0);
       setIdPilotoMelhorVolta(null);
       setTempoMelhorVoltaMs(null);
 
-      const catIdsBateria = (dadosBat.categoriesIds || []).map((id: any) => String(id._id || id));
+      const arrayCategoriasBruto = dadosBat.categoriasIds || dadosBat.categoriesIds || dadosBat.categoriaId || [];
+      const catIdsBateria = (Array.isArray(arrayCategoriasBruto) ? arrayCategoriasBruto : [])
+        .map((id: any) => {
+          if (!id) return '';
+          return typeof id === 'object' ? String(id._id || id.id || '') : String(id);
+        })
+        .filter((id: string) => id !== '');
 
       const resCat = await fetch(`/api/categoria?evento=${idEv}`);
       let listaCategorias: Categoria[] = [];
@@ -137,7 +213,6 @@ function ConteudoCronometragem() {
         const jsonCat = await resCat.json();
         if (Array.isArray(jsonCat)) {
           listaCategorias = jsonCat.filter((c: any) => catIdsBateria.includes(String(c._id)));
-          if (listaCategorias.length === 0) listaCategorias = jsonCat;
         }
       }
       setCategoriasBateria(listaCategorias);
@@ -147,18 +222,24 @@ function ConteudoCronometragem() {
         const todosPilotos = await resPil.json();
         if (Array.isArray(todosPilotos)) {
           const pilotosFiltrados = todosPilotos.filter((piloto: any) => {
-            const pCatIds = (piloto.categoriasIds || []).map((id: any) => String(id._id || id));
+            const arrayPilotoCats = piloto.categoriasIds || piloto.categoriaId || [];
+            const pCatIds = (Array.isArray(arrayPilotoCats) ? arrayPilotoCats : [])
+              .map((id: any) => {
+                if (!id) return '';
+                return typeof id === 'object' ? String(id._id || id.id || '') : String(id);
+              });
+            
             return pCatIds.some((idStr: string) => catIdsBateria.includes(idStr));
           });
 
-          const listaBase = pilotosFiltrados.length > 0 ? pilotosFiltrados : todosPilotos;
-          
-          const pilotosProntos = listaBase.map(p => ({
+          const pilotosProntos = pilotosFiltrados.map(p => ({
             ...p,
             voltas: 0,
             tempoTotalMs: 0,
             melhorVoltaMs: 0,
-            ultimaPassagemMs: 0
+            ultimaPassagemMs: 0,
+            ultimaVoltaMs: 0,      
+            historicoVoltas: []    
           }));
 
           setPilotos(pilotosProntos);
@@ -170,7 +251,24 @@ function ConteudoCronometragem() {
     }
   };
 
-  const registrarPassagemPiloto = (numeralMoto: string) => {
+  const alternarEstadoCorrida = async () => {
+    const proximoEstado = !corridaAtiva;
+    setCorridaAtiva(proximoEstado);
+
+    if (bateriaId) {
+      try {
+        await fetch(`/api/bateria/${bateriaId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: proximoEstado ? 'Na_Pista' : 'Agendada' })
+        });
+      } catch (err) {
+        console.error("Erro ao alterar status da bateria no MongoDB:", err);
+      }
+    }
+  };
+
+  const registrarPassagemPiloto = async (numeralMoto: string) => {
     if (!corridaAtiva) {
       alert("Dê a largada na prova antes de passar as motos!");
       return;
@@ -178,6 +276,13 @@ function ConteudoCronometragem() {
 
     const motoLimpa = numeralMoto.trim();
     if (!motoLimpa) return;
+
+    const pilotoDono = pilotos.find(p => String(p.numeral) === motoLimpa);
+    
+    if (!pilotoDono) {
+      alert(`Piloto com o numeral #${motoLimpa} não foi encontrado nesta bateria.`);
+      return;
+    }
 
     setPilotos(pilotosAtuais => {
       let novaMelhorVoltaMundial = tempoMelhorVoltaMs;
@@ -199,12 +304,16 @@ function ConteudoCronometragem() {
             idDonoDaMelhorVolta = p._id;
           }
 
+          const historicoAtual = p.historicoVoltas || [];
+
           return {
             ...p,
             voltas: voltasAtuais,
             tempoTotalMs: tempoDecorridoMs,
             melhorVoltaMs: novaMelhorVoltaPiloto,
-            ultimaPassagemMs: tempoDecorridoMs
+            ultimaPassagemMs: tempoDecorridoMs,
+            ultimaVoltaMs: tempoDestaVolta, 
+            historicoVoltas: [...historicoAtual, tempoDestaVolta] 
           };
         }
         return p;
@@ -213,25 +322,119 @@ function ConteudoCronometragem() {
       if (idDonoDaMelhorVolta) setIdPilotoMelhorVolta(idDonoDaMelhorVolta);
       if (novaMelhorVoltaMundial) setTempoMelhorVoltaMs(novaMelhorVoltaMundial);
 
-      return [...listaGridAtualizado].sort((a, b) => {
-        const vA = a.voltas || 0;
-        const vB = b.voltas || 0;
-        if (vB !== vA) return vB - vA;
-        
-        const tA = a.tempoTotalMs || 0;
-        const tB = b.tempoTotalMs || 0;
-        return tA - tB;
-      });
+      return updatedSort(listaGridAtualizado);
     });
+
+    try {
+      await fetch('/api/cronometragem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          transponder: pilotoDono.transponder || `MANUAL-${pilotoDono.numeral}`,
+          numeral: pilotoDono.numeral,
+          bateriaId: bateriaId,
+          ipAntena: "127.0.0.1 (Painel Manual)"
+        })
+      });
+    } catch (err) {
+      console.error("Erro ao computar passagem no servidor:", err);
+    }
 
     setNumeroMotoInput('');
   };
 
+  // 🔥 OPERAÇÃO: FINALIZAR PROVA E ABRIR EM NOVA ABA SENSÍVEL AO HISTÓRICO VOLTA A VOLTA
+  const finalizarProvaERegistrar = async () => {
+    if (!eventoId || !bateriaId) {
+      alert("Dados da prova incompletos para finalização.");
+      return;
+    }
+
+    if (!confirm("Deseja fechar e finalizar a prova atual? O relatório será gerado em uma nova aba para comparação.")) {
+      return;
+    }
+
+    try {
+      setSalvando(true);
+      
+      // 1. Pausamos o cronômetro local para congelar o layout de comparação visual
+      setCorridaAtiva(false); 
+
+      // 2. Mudamos o status da bateria no banco para Finalizada
+      await fetch(`/api/bateria/${bateriaId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'Finalizada' })
+      });
+
+      const batteryObj = todasBaterias.find(b => String(b._id) === String(bateriaId));
+      const nomeBateriaFinal = batteryObj?.nome || "BATERIA FINALIZADA";
+
+      // Mapeia o grid garantindo a integridade do array estrutural do volta a volta
+      const gridFinalMapeado = pilotos.map((p, index) => {
+        const pontosGanhos = index === 0 ? 25 : index === 1 ? 22 : index === 2 ? 20 : index === 3 ? 18 : 15;
+        
+        const pCatsDoMapeamento = p.categoriasIds || [];
+        const pCatIdsLimpos = (Array.isArray(pCatsDoMapeamento) ? pCatsDoMapeamento : []).map((id: any) => 
+          typeof id === 'object' ? String(id._id || id.id || '') : String(id)
+        );
+        const categoriaDoPiloto = categoriasBateria.find(c => pCatIdsLimpos.includes(String(c._id)));
+
+        return {
+          pilotoId: p._id,
+          nome: p.nome,
+          numeral: p.numeral,
+          categoriaId: categoriaDoPiloto?._id || "",
+          categoriaNome: categoriaDoPiloto?.nome || "Geral",
+          posicao: index + 1,
+          voltas: p.voltas || 0,
+          tempoTotalMs: p.tempoTotalMs || 0,
+          melhorVoltaMs: p.melhorVoltaMs || 0,
+          pontosGanhos: p.voltas && p.voltas > 0 ? pontosGanhos : 0,
+          // 🏁 Importante: Envia o histórico completo de milissegundos para o relatório renderizar o detalhado
+          historicoVoltas: p.historicoVoltas || [] 
+        };
+      });
+
+      const resposta = await fetch('/api/resultados', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          eventoId,
+          bateriaId,
+          nomeBateria: nomeBateriaFinal,
+          tempoTotalProvaMs: tempoDecorridoMs,
+          melhorVoltaDaProvaMs: tempoMelhorVoltaMs || 0,
+          idPilotoMelhorVolta: idPilotoMelhorVolta,
+          gridFinal: gridFinalMapeado
+        })
+      });
+
+      const dadosRetorno = await resposta.json();
+
+      if (!resposta.ok) {
+        throw new Error(dadosRetorno.error || "Erro desconhecido ao registrar corrida.");
+      }
+
+      // ✨ CORREÇÃO PRINCIPAL: Abre em uma nova aba (_blank) mantendo a tela atual congelada intacta
+      const urlRetorno = origem ? `&origem=${encodeURIComponent(origem)}` : '';
+      const urlRelatorio = `/admin/relatorios/${dadosRetorno.resultadoId}?novaAba=true${urlRetorno}`;
+      
+      window.open(urlRelatorio, '_blank');
+
+    } catch (err: any) {
+      console.error(err);
+      alert(`Falha ao salvar relatório: ${err.message}`);
+    } finally {
+      setSalvando(false);
+    }
+  };
+
   const formatarMilenios = (totalMs: number) => {
-    const minutos = Math.floor(totalMs / 60000);
+    const minutes = Math.floor(totalMs / 60000);
     const segundos = Math.floor((totalMs % 60000) / 1000);
     const milissegundos = totalMs % 1000;
-    return `${minutos.toString().padStart(2, '0')}:${segundos.toString().padStart(2, '0')}.${milissegundos.toString().padStart(3, '0')}`;
+    return `${minutes.toString().padStart(2, '0')}:${segundos.toString().padStart(2, '0')}.${milissegundos.toString().padStart(3, '0')}`;
   };
 
   const formatarVoltaTabela = (ms?: number) => {
@@ -245,12 +448,21 @@ function ConteudoCronometragem() {
   const lidarMudancaBateria = (novaBateriaId: string) => {
     if (!novaBateriaId || novaBateriaId.startsWith('--')) return;
     setCorridaAtiva(false);
-    router.push(`/admin/corrida?eventoId=${eventoId}&bateriaId=${novaBateriaId}`);
+    
+    const urlRetorno = origem ? `&origem=${encodeURIComponent(origem)}` : '';
+    router.push(`/admin/corrida?eventoId=${eventoId}&bateriaId=${novaBateriaId}${urlRetorno}`);
+  };
+
+  const lidarVoltarPainel = () => {
+    if (origem) {
+      router.push(origem);
+    } else {
+      router.push('/admin/painel'); 
+    }
   };
 
   const pilotoRecordista = pilotos.find(p => p._id === idPilotoMelhorVolta);
 
-  // Formata o nome de forma segura para evitar erros de split de undefined
   const obterNomeRecordistaFormatado = () => {
     if (!pilotoRecordista || !pilotoRecordista.nome) return "---";
     const partes = pilotoRecordista.nome.split(' ');
@@ -259,7 +471,7 @@ function ConteudoCronometragem() {
 
   const textoCategoriasTopo = categoriasBateria.length > 0 
     ? categoriasBateria.map(c => c.nome).join(' - ')
-    : "TODAS AS CATEGORIAS";
+    : "NENHUMA CLASSE SELECIONADA";
 
   return (
     <div className="h-screen w-screen bg-[#050505] text-zinc-100 font-sans antialiased flex p-4 gap-4 overflow-hidden select-none">
@@ -309,10 +521,11 @@ function ConteudoCronometragem() {
         <div className="flex-1 bg-[#0b0b0c] border border-zinc-900/60 rounded-xl overflow-hidden flex flex-col">
           <div className="grid grid-cols-12 bg-[#080809] border-b border-zinc-900/80 px-4 py-2.5 text-[10px] font-mono font-bold text-zinc-500 uppercase tracking-wider text-center">
             <div className="col-span-1 text-left">POS.</div>
-            <div className="col-span-3 text-left">PILOTO</div>
+            <div className="col-span-2 text-left">PILOTO</div>
             <div className="col-span-1">#</div>
             <div className="col-span-2">CATEGORIA</div>
             <div className="col-span-1">VOLTA</div>
+            <div className="col-span-1">ÚLTIMA VOLTA</div>
             <div className="col-span-1">TEMPO TOTAL</div>
             <div className="col-span-1">MELHOR VOLTA</div>
             <div className="col-span-1">DIFERENÇA</div>
@@ -336,11 +549,17 @@ function ConteudoCronometragem() {
                   diferencaTexto = `+${diff.toFixed(3)}`;
                 }
 
+                const pCatsDoMapeamento = p.categoriasIds || [];
+                const pCatIdsLimpos = (Array.isArray(pCatsDoMapeamento) ? pCatsDoMapeamento : []).map((id: any) => 
+                  typeof id === 'object' ? String(id._id || id.id || '') : String(id)
+                );
+                const categoriaDoPiloto = categoriasBateria.find(c => pCatIdsLimpos.includes(String(c._id)));
+
                 return (
                   <div key={p._id || `piloto-${index}`} className="grid grid-cols-12 items-center py-3 text-xs font-mono font-bold text-center text-zinc-300 hover:bg-zinc-900/20 transition-colors">
                     <div className="col-span-1 text-left text-zinc-500 text-sm pl-1">{index + 1}</div>
                     
-                    <div className="col-span-3 text-left flex items-center gap-2">
+                    <div className="col-span-2 text-left flex items-center gap-2">
                       <div className={`w-[3px] h-4 ${index === 0 ? 'bg-cyan-500' : 'bg-purple-500'}`}></div>
                       <span className="text-white font-sans text-sm tracking-wide uppercase truncate">{p.nome}</span>
                     </div>
@@ -352,11 +571,19 @@ function ConteudoCronometragem() {
                     </div>
                     
                     <div className="col-span-2 text-zinc-400 uppercase font-sans text-[11px] truncate px-1">
-                      {categoriasBateria[0]?.nome || "FPMX1"}
+                      {categoriaDoPiloto?.nome || "CONCURSO"}
                     </div>
                     
                     <div className="col-span-1 text-white text-sm">{p.voltas || 0}</div>
-                    <div className="col-span-1 text-zinc-400">{formatarVoltaTabela(p.tempoTotalMs)}</div>
+                    
+                    <div className="col-span-1 text-cyan-400 font-medium">
+                      {p.ultimaVoltaMs && p.ultimaVoltaMs > 0 ? formatarVoltaTabela(p.ultimaVoltaMs) : "00:00.000"}
+                    </div>
+                    
+                    <div className="col-span-1 text-zinc-400">
+                      {p.tempoTotalMs && p.tempoTotalMs > 0 ? formatarVoltaTabela(p.tempoTotalMs) : "00:00.000"}
+                    </div>
+                    
                     <div className="col-span-1 text-zinc-300 font-black">
                       {p.melhorVoltaMs && p.melhorVoltaMs > 0 ? formatarVoltaTabela(p.melhorVoltaMs) : "00:00.000"}
                     </div>
@@ -374,22 +601,33 @@ function ConteudoCronometragem() {
 
         <div className="flex justify-between items-center text-[10px] font-mono font-bold text-zinc-600 tracking-wider uppercase shrink-0 px-1">
           <span>SISTEMA DE CRONOMETRAGEM SC</span>
-          <span className="text-emerald-500 flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-            • MODO ONLINE SINCRONIZADO
+          <span className={`${corridaAtiva ? 'text-emerald-500' : 'text-amber-500'} flex items-center gap-1.5`}>
+            <span className={`w-1.5 h-1.5 rounded-full ${corridaAtiva ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
+            • {corridaAtiva ? 'MODO ONLINE SINCRONIZADO' : 'PROVA PAUSADA'}
           </span>
         </div>
       </main>
 
       <aside className="w-[280px] bg-[#0b0b0c] border border-zinc-900/80 rounded-xl p-4 flex flex-col gap-2.5 shrink-0">
         
+        <button 
+          onClick={lidarVoltarPainel}
+          disabled={salvando}
+          className="w-full bg-[#161619] hover:bg-zinc-800 text-zinc-300 hover:text-white font-sans font-bold text-xs py-3 px-4 rounded-xl border border-zinc-800/80 transition-all flex items-center justify-center gap-2 uppercase tracking-wide disabled:opacity-50"
+        >
+          <ArrowLeft size={15} className="text-zinc-400" /> Voltar ao Painel
+        </button>
+
+        <div className="h-[1px] bg-zinc-900/60 my-0.5"></div>
+
         <button className="w-full bg-[#121214] hover:bg-zinc-800 text-zinc-400 hover:text-white font-mono font-bold text-xs py-3 px-4 rounded-xl border border-zinc-900 transition-all flex items-center justify-center gap-2 uppercase tracking-wide">
           <Volume2 size={15} className="text-emerald-500" /> Ativar Aviso Sonoro
         </button>
 
         <button 
-          onClick={() => setCorridaAtiva(!corridaAtiva)}
-          className={`w-full font-sans font-black text-sm py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider ${
+          onClick={alternarEstadoCorrida}
+          disabled={salvando}
+          className={`w-full font-sans font-black text-sm py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider disabled:opacity-50 ${
             corridaAtiva ? 'bg-amber-600 hover:bg-amber-700 text-white' : 'bg-[#00a86b] hover:bg-emerald-600 text-white'
           }`}
         >
@@ -401,15 +639,15 @@ function ConteudoCronometragem() {
         </button>
 
         <button 
-          onClick={() => {
-            if(confirm("Deseja fechar e finalizar a prova atual?")) {
-              setCorridaAtiva(false);
-              router.back();
-            }
-          }}
-          className="w-full bg-red-600 hover:bg-red-700 text-white font-sans font-black text-sm py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider"
+          onClick={finalizarProvaERegistrar}
+          disabled={salvando}
+          className="w-full bg-red-600 hover:bg-red-700 text-white font-sans font-black text-sm py-4 px-4 rounded-xl transition-all flex items-center justify-center gap-2 uppercase tracking-wider disabled:bg-zinc-800 disabled:text-zinc-500"
         >
-          Finalizar Prova
+          {salvando ? (
+            <><Loader2 size={15} className="animate-spin" /> Gravando...</>
+          ) : (
+            "Finalizar Prova"
+          )}
         </button>
 
         <div className="h-[1px] bg-zinc-900 my-1"></div>
@@ -432,7 +670,7 @@ function ConteudoCronometragem() {
 
         <div className="mt-auto pt-4 border-t border-zinc-900 space-y-2">
           <label className="text-[10px] font-mono font-black text-zinc-500 tracking-wider uppercase block">
-            ⬜ SIMULAR PASSAGEM DE MOTO
+            Substituir/Passagem Manual de Moto
           </label>
           <div className="flex gap-1.5 font-mono">
             <input 

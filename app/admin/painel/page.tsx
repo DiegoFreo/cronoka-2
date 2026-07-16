@@ -1,9 +1,10 @@
 'use client';
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   Users, Timer, Layers, Calendar, MapPin, 
-  Zap, FileText, Cpu, BarChart3, ChevronRight, ArrowLeft 
+  Zap, FileText, Cpu, BarChart3, ChevronRight, ArrowLeft, Flag, Settings, LogOut, CheckCircle2, FlagTriangleRight,
+  AirVent, Loader2
 } from 'lucide-react';
 
 interface Evento { 
@@ -15,7 +16,15 @@ interface Evento {
   modalidadeId?: { _id: string; nome: string; } | string; 
 }
 interface Categoria { _id: string; nome: string; }
-interface Bateria { _id: string; nome: string; tempoProva: number; voltasExtras: number; categoriesIds: string[]; }
+
+interface Bateria { 
+  _id: string; 
+  nome: string; 
+  tempoProva: number; 
+  voltasExtras: number; 
+  categoriaId: string[] | any; // Ajustado para aceitar objetos vindos populados
+  categoriasIds?: string[] | any;
+}
 
 interface Piloto { 
   _id: string; 
@@ -26,9 +35,19 @@ interface Piloto {
   eventoId: string; 
 }
 
+interface LeitoraConfig {
+  _id: string;
+  nome: string;
+  ip: string;
+  porta: number;
+  modo: 'SERVER' | 'CLIENT';
+  ativa: boolean;
+  status: 'conectado' | 'desconectado' | 'iniciada' | 'tentando';
+}
+
 export default function PainelAdmin() {
   // Controle de Abas principais do Menu Lateral
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'relatorios_global'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'pilotos' | 'relatorios' | 'configuracoes'>('dashboard');
   const [bateriaAtivaId, setBateriaAtivaId] = useState<string>(''); 
   const router = useRouter();
   
@@ -47,6 +66,10 @@ export default function PainelAdmin() {
   const [baterias, setBaterias] = useState<Bateria[]>([]);
   const [pilotos, setPilotos] = useState<Piloto[]>([]);
   
+  // Estados de Hardware (RFID Redundância)
+  const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
+  const [ultimasTagsLidas, setUltimasTagsLidas] = useState<{ tag: string; dataHora: string; antena: string }[]>([]);
+
   // Estados de Carregamento (Loadings)
   const [loadingEvento, setLoadingEvento] = useState(false);
   const [loadingCategoria, setLoadingCategoria] = useState(false);
@@ -60,17 +83,169 @@ export default function PainelAdmin() {
   const [localEv, setLocalEv] = useState('');
   const [dataEv, setDataEv] = useState('');
 
-  // Estados para montagem de nova bateria
+  // Estados para montagem de bateria
   const [nomeBat, setNomeBat] = useState('');
   const [tempoBat, setTempoBat] = useState('15');
   const [voltasBat, setVoltasBat] = useState('2');
   const [catsSelecionadas, setCatsSelecionadas] = useState<string[]>([]);
+  
+  // 🔥 NOVO: Controle de estado para edição da bateria selecionada
+  const [bateriaEmEdicao, setBateriaEmEdicao] = useState<Bateria | null>(null);
 
   // Estados do formulário de piloto
   const [nomePiloto, setNomePiloto] = useState('');
   const [numeralPiloto, setNumeralPiloto] = useState('');
   const [transponderPiloto, setTransponderPiloto] = useState('');
   const [catsPilotoSelecionadas, setCatsPilotoSelecionadas] = useState<string[]>([]);
+  
+  // Controle de estado para edição do piloto selecionado
+  const [pilotoEmEdicao, setPilotoEmEdicao] = useState<Piloto | null>(null);
+
+  // Estados do formulário de leitoras
+  const [nomeLeitora, setNomeLeitora] = useState('');
+  const [ipLeitora, setIpLeitora] = useState('');
+  const [portaLeitora, setPortaLeitora] = useState('5084');
+  const [modoLeitora, setModoLeitora] = useState<'SERVER' | 'CLIENT'>('CLIENT');
+
+  // Referência para manter as leitoras sempre atualizadas sem disparar efeitos
+  const leitorasRef = useRef(leitoras);
+  useEffect(() => {
+    leitorasRef.current = leitoras;
+  }, [leitoras]);
+
+  useEffect(() => {
+  if (leitorasRef.current.length === 0) return;
+
+  const checarStatusEHardware = async () => {
+    let todasAsTagsDessaRodada: { tag: string; dataHora: string; antena: string }[] = [];
+    
+    const updatedLeitoras = await Promise.all(
+      leitorasRef.current.map(async (leitora) => {
+        if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
+
+        try {
+          // 💡 Mudamos para GET usando o IP como parâmetro limpo na URL
+          // Isso evita desalinhamento de chaves que acontece no corpo do POST
+          const url = `/api/leitora?ip=${encodeURIComponent(leitora.ip)}&id=${encodeURIComponent(leitora._id)}`;
+          const res = await fetch(url, { method: 'GET' });
+          
+          if (res.ok) {
+            const dados = await res.json();
+            
+            if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
+              const tagsComNomeOrigem = dados.tagsRecentes.map((t: { tag: string; dataHora: string }) => ({
+                ...t,
+                antena: leitora.nome // Vincula o nome amigável da leitora do seu sistema
+              }));
+              todasAsTagsDessaRodada = [...todasAsTagsDessaRodada, ...tagsComNomeOrigem];
+            }
+
+            return { 
+              ...leitora, 
+              status: dados.status, 
+              ativa: dados.status === 'conectado' 
+            };
+          }
+        } catch (err) {
+          console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
+        }
+        return leitora;
+      })
+    );
+
+    setLeitoras(updatedLeitoras);
+
+    if (todasAsTagsDessaRodada.length > 0) {
+      setUltimasTagsLidas((prevAcumulado) => {
+        const listaMesclada = [...todasAsTagsDessaRodada, ...prevAcumulado];
+        
+        const idsUnicos = new Set();
+        const listaFiltrada = listaMesclada.filter((item) => {
+          // Garante unicidade combinando tag e hora
+          const chaveUnica = `${item.tag}-${item.dataHora}`;
+          if (idsUnicos.has(chaveUnica)) return false;
+          idsUnicos.add(chaveUnica);
+          return true;
+        });
+
+        return listaFiltrada
+          .sort((a, b) => b.dataHora.localeCompare(a.dataHora))
+          .slice(0, 20); // Mantém apenas o topo histórico de 20 leituras
+      });
+    }
+  };
+
+  checarStatusEHardware();
+  const intervalo = setInterval(checarStatusEHardware, 5000);
+
+  return () => clearInterval(intervalo);
+}, []);
+
+  // Efeito para monitorar status e acumular tags em tempo real
+  useEffect(() => {
+    if (leitorasRef.current.length === 0) return;
+
+    const checarStatusEHardware = async () => {
+      let todasAsTagsDessaRodada: { tag: string; dataHora: string; antena: string }[] = [];
+      
+      const updatedLeitoras = await Promise.all(
+        leitorasRef.current.map(async (leitora) => {
+          if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
+
+          try {
+            const res = await fetch('/api/leitora', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'STATUS', id: leitora._id, ip: leitora.ip, modo: leitora.modo })
+            });
+            
+            if (res.ok) {
+              const dados = await res.json();
+              
+              if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
+                const tagsComNomeOrigem = dados.tagsRecentes.map((t: any) => ({
+                  ...t,
+                  antena: leitora.nome 
+                }));
+                todasAsTagsDessaRodada = [...todasAsTagsDessaRodada, ...tagsComNomeOrigem];
+              }
+
+              return { ...leitora, status: dados.status, ativa: dados.status === 'conectado' };
+            }
+          } catch (err) {
+            console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
+          }
+          return leitora;
+        })
+      );
+
+      setLeitoras(updatedLeitoras);
+
+      if (todasAsTagsDessaRodada.length > 0) {
+        
+        setUltimasTagsLidas((prevAcumulado) => {
+          const listaMesclada = [...todasAsTagsDessaRodada, ...prevAcumulado];
+          
+          const idsUnicos = new Set();
+          const listaFiltrada = listaMesclada.filter((item) => {
+            const chaveUnica = `${item.tag}-${item.dataHora}`;
+            if (idsUnicos.has(chaveUnica)) return false;
+            idsUnicos.add(chaveUnica);
+            return true;
+          });
+
+          return listaFiltrada
+            .sort((a, b) => b.dataHora.localeCompare(a.dataHora))
+            .slice(0, 20);
+        });
+      }
+    };
+
+    checarStatusEHardware();
+    const intervalo = setInterval(checarStatusEHardware, 5000);
+
+    return () => clearInterval(intervalo);
+  }, []);
 
   useEffect(() => {
     carregarPainelInicial();
@@ -86,6 +261,13 @@ export default function PainelAdmin() {
         const dadosMod = await resMod.json();
         setModalidades(dadosMod || []);
         if (dadosMod && dadosMod.length > 0) setModalidadeEvId(dadosMod[0]._id);
+      }
+      
+      const resAntenas = await fetch('/api/antenas');
+      if (resAntenas.ok) {
+        const dadosAntenas = await resAntenas.json();
+        const antennasWithStatus = dadosAntenas.map((a: any) => ({ ...a, status: 'desconectado' }));
+        setLeitoras(antennasWithStatus);
       }
 
       const resMetricas = await fetch('/api/admin/metricas');
@@ -105,6 +287,12 @@ export default function PainelAdmin() {
     setNumeralPiloto(''); 
     setTransponderPiloto(''); 
     setCatsPilotoSelecionadas([]);
+    setPilotoEmEdicao(null); 
+    setNomeBat(''); 
+    setTempoBat('15');
+    setVoltasBat('2');
+    setCatsSelecionadas([]); 
+    setBateriaEmEdicao(null); // Reseta a edição de bateria ao entrar/mudar de evento
     
     try {
       const [resCat, resBat, resPil] = await Promise.all([
@@ -157,6 +345,9 @@ export default function PainelAdmin() {
     }
   };
 
+  /**
+   * ⏱️ ATUALIZAÇÃO: Gerenciamento Unificado de Baterias (Cadastro e Alteração)
+   */
   const handleCriarBateria = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nomeBat.trim() || !eventoAtivo || catsSelecionadas.length === 0) {
@@ -166,27 +357,62 @@ export default function PainelAdmin() {
 
     setLoadingBateria(true);
     try {
-      const res = await fetch('/api/bateria', {
-        method: 'POST',
+      // Modifica dinamicamente a URL e Método se estiver editando ou salvando novo
+      const URL_ALVO = bateriaEmEdicao ? `/api/bateria?id=${bateriaEmEdicao._id}` : '/api/bateria';
+      const METODO = bateriaEmEdicao ? 'PUT' : 'POST';
+
+      const res = await fetch(URL_ALVO, {
+        method: METODO,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          nome: nomeBat,
+          _id: bateriaEmEdicao?._id, // Envia o ID caso seja edição
+          nome: nomeBat.toUpperCase(),
           tempoProva: Number(tempoBat),
           voltasExtras: Number(voltasBat),
-          categoriasIds: catsSelecionadas,
+          categoriaId: catsSelecionadas, // Envia o array de IDs selecionados
           eventoId: eventoAtivo._id
         })
       });
+      console.log('Categorias selecionadas:', catsSelecionadas);
+      console.log('Resposta da API:', res);
 
       if (res.ok) {
         setNomeBat('');
+        setTempoBat('15');
+        setVoltasBat('2');
         setCatsSelecionadas([]);
+        setBateriaEmEdicao(null); // Sai do modo de edição
         await entrarNoEvento(eventoAtivo);
       } else {
-        alert("Erro ao criar bateria.");
+        alert(bateriaEmEdicao ? "Erro ao atualizar a bateria." : "Erro ao criar bateria.");
       }
     } catch (err) { console.error(err); }
     setLoadingBateria(false);
+  };
+
+  /**
+   * 🎯 INTERCEPTA CLIQUE DA TABELA E POPULA O FORMULÁRIO DE EDIÇÃO DA BATERIA
+   */
+  const handleEditarBateria = (bateria: Bateria) => {
+    setBateriaEmEdicao(bateria);
+    
+    setNomeBat(bateria.nome);
+    setTempoBat(String(bateria.tempoProva || '15'));
+    setVoltasBat(String(bateria.voltasExtras || '2'));
+    
+    // Tratamento das categorias vinculadas (Suporta se vier como Array de IDs ou Array de Objetos)
+    const origemCategorias = bateria.categoriaId || bateria.categoriaId || [];
+    const idsTratados = origemCategorias.map((cat: any) => {
+      return typeof cat === 'object' && cat !== null ? cat._id : cat;
+    });
+
+    setCatsSelecionadas(idsTratados);
+  };
+
+  const handleToggleCategoriaBateria = (id: string) => {
+    setCatsSelecionadas(prev => 
+      prev.includes(id) ? prev.filter(catId => catId !== id) : [...prev, id]
+    );
   };
 
   const handleCriarPiloto = async (e: React.FormEvent) => {
@@ -198,10 +424,14 @@ export default function PainelAdmin() {
 
     setLoadingPiloto(true);
     try {
-        const res = await fetch('/api/piloto', {
-          method: 'POST',
+        const URL_ALVO = pilotoEmEdicao ? `/api/piloto?id=${pilotoEmEdicao._id}` : '/api/piloto';
+        const METODO = pilotoEmEdicao ? 'PUT' : 'POST';
+
+        const res = await fetch(URL_ALVO, {
+          method: METODO,
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
+              _id: pilotoEmEdicao?._id,
               nome: nomePiloto,
               numeral: numeralPiloto,
               transponder: transponderPiloto,
@@ -211,14 +441,116 @@ export default function PainelAdmin() {
         });
 
         if (res.ok) {
+          setNomePiloto('');
+          setNumeralPiloto('');
           setTransponderPiloto('');
           setCatsPilotoSelecionadas([]); 
+          setPilotoEmEdicao(null); 
           await entrarNoEvento(eventoAtivo);
         } else {
-          alert("Erro ao cadastrar o piloto.");
+          alert(pilotoEmEdicao ? "Erro ao atualizar o piloto." : "Erro ao cadastrar o piloto.");
         }
-    } catch (err) { console.error(err); }
-    setLoadingPiloto(false);
+    } catch (err) { 
+      console.error(err); 
+    } finally {
+      setLoadingPiloto(false);
+    }
+  };
+
+  const handleEditarPiloto = (piloto: Piloto) => {
+    setPilotoEmEdicao(piloto);
+    setNomePiloto(piloto.nome);
+    setNumeralPiloto(piloto.numeral);
+    setTransponderPiloto(piloto.transponder || '');
+    
+    const idsTratados = piloto.categoriasIds.map((cat: any) => {
+      return typeof cat === 'object' && cat !== null ? cat._id : cat;
+    });
+
+    setCatsPilotoSelecionadas(idsTratados);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  };
+
+  const handleSalvarLeitora = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nomeLeitora || !ipLeitora) {
+      alert("Preencha o nome e o IP da leitora.");
+      return;
+    }
+
+    const novaLeitoraDados = {
+      nome: nomeLeitora.toUpperCase(),
+      ip: ipLeitora.trim(),
+      porta: Number(portaLeitora),
+      modo: modoLeitora,
+      status: 'desconectado'
+    };
+
+    try {
+      const res = await fetch('/api/antenas', { 
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(novaLeitoraDados)
+      });
+
+      if (res.ok) {
+        const respostaPost = await res.json();
+        const antenaSalva = respostaPost.data; 
+
+        const leitoraComStatus: LeitoraConfig = {
+          ...antenaSalva,
+          status: 'desconectado'
+        };
+
+        setLeitoras(prev => {
+          const existe = prev.some(l => l.ip === leitoraComStatus.ip);
+          if (existe) {
+            return prev.map(l => l.ip === leitoraComStatus.ip ? leitoraComStatus : l);
+          }
+          return [...prev, leitoraComStatus];
+        });
+        
+        setNomeLeitora(''); 
+        setIpLeitora(''); 
+        setPortaLeitora('5084');
+      } else {
+        const errDados = await res.json();
+        alert(`Erro: ${errDados.error || 'Falha ao salvar no banco.'}`);
+      }
+    } catch (err) {
+      console.error("Erro na requisição:", err);
+      alert("Falha de conexão com a API do banco.");
+    }
+  };
+
+  const handleToggleLeitoraHardware = async (leitora: LeitoraConfig) => {
+    const novaAcao = leitora.status === 'conectado' ? 'STOP' : 'START';
+    
+    setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: novaAcao === 'START' ? 'iniciada' : 'desconectado' } : l));
+
+    try {
+      const res = await fetch('/api/leitora', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: novaAcao,
+          id: leitora._id,
+          ip: leitora.ip,
+          porta: leitora.porta,
+          modo: leitora.modo
+        })
+      });
+
+      if (res.ok) {
+        const dados = await res.json();
+        setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: dados.status, ativa: dados.status === 'conectado' } : l));
+      } else {
+        setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: 'desconectado', ativa: false } : l));
+      }
+    } catch (error) {
+      console.error(error);
+      setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: 'desconectado', ativa: false } : l));
+    }
   };
 
   const handleToggleCategoriaPiloto = (id: string) => {
@@ -227,15 +559,24 @@ export default function PainelAdmin() {
     );
   };
 
-  const obterNomesCategorias = (ids: string[]) => {
-    return ids
-      .map(id => categorias.find(c => c._id === id)?.nome)
-      .filter(Boolean)
-      .join(', ');
+  const obterNomesCategorias = (ids: any[]) => {
+    if (!ids) return '';
+    return ids.map(cat => {
+      if (typeof cat === 'object' && cat !== null) return cat.nome;
+      return categorias.find(c => c._id === cat)?.nome;
+    }).filter(Boolean).join(', ');
+  };
+
+  const irParaPaginaRelatorios = () => {
+    setActiveTab('relatorios');
+    if (eventoAtivo) {
+      router.push(`/admin/relatorios?eventoId=${eventoAtivo._id}`);
+    } else {
+      router.push('/admin/relatorios');
+    }
   };
 
   return (
-    // AJUSTE: h-screen e max-h-screen travam o tamanho da janela inteira no monitor
     <div className="flex h-screen max-h-screen bg-[#070708] text-zinc-100 font-sans antialiased overflow-hidden print:bg-white print:text-black">
       
       {/* MENU LATERAL */}
@@ -244,22 +585,69 @@ export default function PainelAdmin() {
           <img src="/FPMX-logo.png" alt="Logo Cronoka" className="w-12 h-12 object-contain" />     
           <div>
             <h2 className="text-xs font-black tracking-wider uppercase text-white">CRONOKA</h2>
-            <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-widest">Controle de Corrida</p>
+            <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-widest">Painel de controle</p>
           </div>
         </div>
 
+        {/* STATUS DAS LEITORAS EM TEMPO REAL */}
+        {leitoras.length > 0 && (
+          <div className="px-6 py-3 bg-black/40 border-b border-zinc-900/60 space-y-1.5">
+            <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-wider">📡 Hardware em Campo</p>
+            <div className="space-y-1 max-h-[80px] overflow-y-auto custom-scrollbar">
+              {leitoras.map(l => (
+                <div key={l._id} className="flex items-center justify-between text-[10px] font-mono bg-zinc-950/40 px-2 py-1 rounded border border-zinc-900">
+                  <span className="text-zinc-400 truncate max-w-[120px] uppercase font-bold">{l.nome}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      l.status === 'conectado' ? 'bg-emerald-500 animate-pulse' :
+                      l.status === 'tentando' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
+                    }`} />
+                    <span className={`text-[9px] font-black uppercase ${
+                      l.status === 'conectado' ? 'text-emerald-500' :
+                      l.status === 'tentando' ? 'text-amber-500' : 'text-red-500'
+                    }`}>
+                      {l.status === 'conectado' ? 'ONLINE' : l.status === 'tentando' ? 'CONECTANDO' : 'OFFLINE'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* NAVEGAÇÃO DO MENU */}
         <nav className="flex-1 p-4 space-y-1 text-xs font-medium text-zinc-400">
           <button 
-            onClick={() => { setActiveTab('dashboard'); setView('lista'); }} 
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors ${activeTab === 'dashboard' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-950 hover:text-zinc-200'}`}
+            onClick={() => { setActiveTab('dashboard'); }} 
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'dashboard' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
           >
-            <BarChart3 size={16} className={activeTab === 'dashboard' ? 'text-red-500' : ''} /> Painel Principal
+            <BarChart3 size={16} className={activeTab === 'dashboard' ? 'text-red-500' : 'text-zinc-500'} /> Painel Principal
+          </button>
+          
+          <button 
+            onClick={() => { setActiveTab('pilotos'); }} 
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'pilotos' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
+          >
+            <Users size={16} className={activeTab === 'pilotos' ? 'text-red-500' : 'text-zinc-500'} /> Cadastro Pilotos
+          </button>
+          
+          <button 
+            onClick={irParaPaginaRelatorios} 
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'relatorios' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
+          >
+            <FileText size={16} className={activeTab === 'relatorios' ? 'text-red-500' : 'text-zinc-500'} /> Relatórios
+          </button>
+
+          <button 
+            onClick={() => { setActiveTab('configuracoes'); }} 
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'configuracoes' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
+          >
+            <Settings size={16} className={activeTab === 'configuracoes' ? 'text-red-500' : 'text-zinc-500'} /> Configurações
           </button>
         </nav>
       </aside>
 
       {/* CONTEÚDO CENTRAL */}
-      {/* AJUSTE: O main agora tem h-full e overflow-y-auto controlado */}
       <main className="flex-1 h-full overflow-y-auto p-8 pr-6 print:p-0">
         
         {activeTab === 'dashboard' && (
@@ -336,7 +724,7 @@ export default function PainelAdmin() {
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="text-[9px] font-mono bg-black text-red-500 border border-zinc-800 px-1.5 py-0.5 rounded uppercase font-bold">
-                                {typeof ev.modalidadeId === 'object' ? ev.modalidadeId?.nome : 'Outros'}
+                                {typeof ev.modalidadeId === 'object' ? (ev.modalidadeId as any)?.nome : 'Outros'}
                               </span>
                               <h3 className="text-sm font-black text-white uppercase">{ev.nome}</h3>
                             </div>
@@ -354,16 +742,19 @@ export default function PainelAdmin() {
                 </div>
               </>
             ) : (
-              /* DENTRO DO CONFIGURADOR DO EVENTO */
+              /* DETALHES DO EVENTO ATIVO */
               <div className="space-y-6 pb-6">
-                <button onClick={() => { setView('lista'); }} className="flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-white font-mono uppercase transition-colors">
-                  <ArrowLeft size={14} className="text-red-600" /> Voltar à lista de Ativos
-                </button>
+                <div className="flex justify-between items-center">
+                  <button onClick={() => { setView('lista'); }} className="flex items-center gap-2 text-xs font-bold text-zinc-500 hover:text-white font-mono uppercase transition-colors">
+                    <ArrowLeft size={14} className="text-red-600" /> Voltar ao painel Operacional
+                  </button>
+                  <span className="text-xs font-mono text-zinc-500">Para gerenciar competidores clique em <b className="text-red-500">Cadastro Pilotos</b> no menu.</span>
+                </div>
 
                 <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
                   <div>
                     <span className="text-[9px] font-mono bg-black text-red-500 border border-zinc-800 px-2 py-0.5 rounded font-bold uppercase">
-                      {typeof eventoAtivo?.modalidadeId === 'object' ? eventoAtivo?.modalidadeId?.nome : 'Grid'}
+                      {typeof eventoAtivo?.modalidadeId === 'object' ? (eventoAtivo?.modalidadeId as any)?.nome : 'Grid'}
                     </span>
                     <h1 className="text-xl font-black text-white uppercase mt-1">{eventoAtivo?.nome}</h1>
                     <p className="text-xs text-zinc-500 font-mono">{eventoAtivo?.local} — {eventoAtivo?.data ? new Date(eventoAtivo.data).toLocaleDateString('pt-BR') : ''}</p>
@@ -383,7 +774,6 @@ export default function PainelAdmin() {
                   </button>
                 </div>
 
-                {/* BLOCO SUPERIOR: CATEGORIAS, NOVA BATERIA, BATERIAS AGENDADAS */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
                   
                   {/* FORM CATEGORIA */}
@@ -412,192 +802,326 @@ export default function PainelAdmin() {
                           }
                         } catch (err) { console.error(err); }
                         setLoadingCategoria(false);
-                      }} 
+                      }}
                       className="space-y-3 font-mono text-xs"
                     >
-                      <input type="text" name="nomeCat" placeholder="EX: MX1 PRO" className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required disabled={loadingCategoria} />
-                      <button type="submit" disabled={loadingCategoria} className="w-full font-black uppercase bg-red-600 hover:bg-red-700 text-white py-2 rounded tracking-wider text-[11px] transition-all">
-                        {loadingCategoria ? "SALVANDO..." : "Adicionar Classe"}
+                      <input type="text" name="nomeCat" placeholder="EX: MX1, FORÇA LIVRE" className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
+                      <button type="submit" disabled={loadingCategoria} className="w-full bg-zinc-900 border border-zinc-800 hover:bg-zinc-800 font-bold py-2 rounded text-[11px] uppercase tracking-wider text-zinc-300">
+                        {loadingCategoria ? "Salvando..." : "Adicionar Categoria"}
                       </button>
                     </form>
 
-                    <div>
-                      <p className="text-[10px] text-zinc-500 font-bold uppercase mb-2 font-mono">Categorias no Grid:</p>
-                      {/* AJUSTE: Altura máxima controlada com scroll para evitar esticar o bloco */}
-                      <div className="space-y-1 max-h-[140px] overflow-y-auto pr-1 custom-scrollbar">
-                        {!categorias || categorias.length === 0 ? (
-                          <p className="text-[11px] text-zinc-600 italic">Nenhuma classe criada.</p>
-                        ) : (
-                          categorias.map(cat => (
-                            <div key={cat._id} className="bg-black border border-zinc-900 p-2 rounded text-xs uppercase font-bold text-zinc-300">
-                              {cat.nome}
-                            </div>
-                          ))
-                        )}
-                      </div>
+                    <div className="pt-2 border-t border-zinc-900 space-y-1 max-h-[140px] overflow-y-auto custom-scrollbar">
+                      <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">Categorias Criadas</p>
+                      {categorias.map(c => (
+                        <div key={c._id} className="text-xs bg-black px-2 py-1.5 rounded border border-zinc-900 text-zinc-400 font-bold uppercase">
+                          {c.nome}
+                        </div>
+                      ))}
                     </div>
                   </div>
 
-                  {/* FORM BATERIA */}
+                  {/* ⏱️ FORMULÁRIO DE BATERIA ATUALIZADO (CADASTRO E EDIÇÃO) */}
                   <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                    <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
-                      <Zap size={14} className="text-amber-500" /> Nova Bateria / Grid
-                    </h2>
+                    <div className="flex justify-between items-center">
+                      <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+                        <Timer size={14} className="text-red-500" /> 
+                        {bateriaEmEdicao ? "Alterar Bateria" : "Configurar Bateria"}
+                      </h2>
+                      {bateriaEmEdicao && (
+                        <button 
+                          onClick={() => {
+                            setBateriaEmEdicao(null);
+                            setNomeBat('');
+                            setTempoBat('15');
+                            setVoltasBat('2');
+                            setCatsSelecionadas([]);
+                          }} 
+                          className="text-[10px] font-mono text-zinc-500 hover:text-white uppercase underline"
+                        >
+                          Cancelar
+                        </button>
+                      )}
+                    </div>
+
                     <form onSubmit={handleCriarBateria} className="space-y-3 font-mono text-xs">
-                      <input type="text" placeholder="Nome (Ex: 1ª Bateria)" value={nomeBat} onChange={e => setNomeBat(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
+                      <input 
+                        type="text" 
+                        placeholder="EX: 1ª BATERIA MX1/MX2" 
+                        value={nomeBat} 
+                        onChange={e => setNomeBat(e.target.value)} 
+                        className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" 
+                        required 
+                      />
                       <div className="grid grid-cols-2 gap-2">
                         <div>
-                          <label className="text-[9px] text-zinc-500 font-bold block mb-1">TEMPO (MIN)</label>
-                          <input type="number" value={tempoBat} onChange={e => setTempoBat(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white text-center font-bold" />
+                          <label className="text-[9px] text-zinc-500 font-bold uppercase block mb-1">Minutos de Prova</label>
+                          <input type="number" placeholder="Minutos" value={tempoBat} onChange={e => setTempoBat(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
                         </div>
                         <div>
-                          <label className="text-[9px] text-zinc-500 font-bold block mb-1">VOLTAS EXTRA</label>
-                          <input type="number" value={voltasBat} onChange={e => setVoltasBat(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white text-center font-bold" />
+                          <label className="text-[9px] text-zinc-500 font-bold uppercase block mb-1">Voltas Extras</label>
+                          <input type="number" placeholder="Voltas" value={voltasBat} onChange={e => setVoltasBat(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
                         </div>
                       </div>
 
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-zinc-500 font-bold uppercase">Selecione as Classes Coletivas:</label>
-                        {/* AJUSTE: Scroll interno para a listagem de checkboxes das categorias */}
-                        <div className="bg-black border border-zinc-900 rounded p-2 max-h-[100px] overflow-y-auto space-y-2 custom-scrollbar">
-                          {!categorias || categorias.length === 0 ? (
-                            <p className="text-[11px] text-zinc-600 italic p-1">Cadastre as categorias primeiro...</p>
-                          ) : (
-                            categorias.map(cat => (
-                              <label key={cat._id} className="flex items-center gap-2 text-xs text-zinc-300 font-sans uppercase cursor-pointer select-none">
-                                <input 
-                                  type="checkbox" 
-                                  checked={catsSelecionadas.includes(cat._id)} 
-                                  onChange={() => setCatsSelecionadas(prev => prev.includes(cat._id) ? prev.filter(id => id !== cat._id) : [...prev, cat._id])} 
-                                  className="accent-red-600" 
-                                />
+                      <div className="space-y-1.5 pt-1">
+                        <label className="text-[10px] text-zinc-500 font-bold uppercase block">Classes que correm juntas:</label>
+                        <div className="grid grid-cols-2 gap-1.5 max-h-[100px] overflow-y-auto p-1 bg-black rounded border border-zinc-900 custom-scrollbar">
+                          {categorias.map(cat => {
+                            const marcado = catsSelecionadas.includes(cat._id);
+                            return (
+                              <button
+                                key={cat._id}
+                                type="button"
+                                onClick={() => handleToggleCategoriaBateria(cat._id)}
+                                className={`p-1.5 rounded text-left truncate text-[10px] font-bold uppercase transition-all border ${
+                                  marcado ? 'bg-red-950/20 text-red-400 border-red-900/60' : 'bg-zinc-900/40 text-zinc-400 border-transparent hover:border-zinc-800'
+                                }`}
+                              >
                                 {cat.nome}
-                              </label>
-                            ))
-                          )}
+                              </button>
+                            );
+                          })}
                         </div>
                       </div>
 
-                      <button type="submit" disabled={loadingBateria} className="w-full font-black uppercase bg-amber-600 hover:bg-amber-700 text-white py-2 rounded tracking-wider text-[11px] transition-all">
-                        {loadingBateria ? "AGENDANDO..." : "Agendar Bateria"}
+                      <button 
+                        type="submit" 
+                        disabled={loadingBateria} 
+                        className={`w-full font-black py-2.5 rounded text-[11px] uppercase tracking-wider text-white transition-all ${
+                          bateriaEmEdicao ? 'bg-amber-600 hover:bg-amber-700' : 'bg-red-600 hover:bg-red-700'
+                        }`}
+                      >
+                        {loadingBateria ? "Gravando..." : bateriaEmEdicao ? "Salvar Alterações" : "Lançar Cronograma"}
                       </button>
                     </form>
                   </div>
 
-                  {/* LISTA DE BATERIAS */}
-                  <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                    <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
-                      <Timer size={14} className="text-blue-500" /> Baterias Agendadas
-                    </h2>
-                    {/* AJUSTE: max-h igualado para manter simetria visual das três colunas no topo */}
-                    <div className="space-y-2 max-h-[295px] overflow-y-auto pr-1 custom-scrollbar">
-                      {!baterias || baterias.length === 0 ? (
-                        <div className="text-center py-6 text-zinc-600 italic font-mono text-xs">Nenhuma bateria montada.</div>
-                      ) : (
-                        baterias.map(b => (
-                          <div key={b._id} className="bg-black border border-zinc-900 p-3 rounded-xl font-mono text-xs space-y-3 flex flex-col justify-between group hover:border-zinc-800 transition-all">
-                            <div className="space-y-1">
-                              <div className="flex justify-between items-center">
-                                <strong className="text-white uppercase text-[13px]">{b.nome}</strong>
-                                <span className="text-[10px] text-amber-500 font-bold bg-amber-950/20 px-1.5 py-0.5 rounded border border-amber-900/30">
-                                  {b.tempoProva}min + {b.voltasExtras}V
-                                </span>
-                              </div>
-                              <p className="text-[10px] text-zinc-500 uppercase">{b.categoriesIds?.length || 0} Classe(s) vinculada(s)</p>
-                            </div>
-
-                            <button
-                              onClick={() => {
-                                setBateriaAtivaId(b._id);
-                                router.push(`/admin/corrida?bateriaId=${b._id}&eventoId=${eventoAtivo?._id}`);
-                              }}
-                              className="w-full bg-zinc-900 hover:bg-emerald-600 border border-zinc-800 hover:border-emerald-500 text-zinc-300 hover:text-white py-1.5 px-3 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all flex items-center justify-center gap-2"
+                  {/* 🏁 LISTA DE BATERIAS LANÇADAS COM O BOTÃO DE EDITAÇÃO */}
+                  <div className="space-y-2">
+                    <h2 className="text-xs font-black uppercase tracking-wider text-zinc-500 font-mono">Cronogramas de Corrida</h2>
+                    {!baterias || baterias.length === 0 ? (
+                      <div className="p-6 text-center text-zinc-600 bg-[#0c0c0e] rounded-xl border border-zinc-900 italic font-mono text-xs">Nenhum cronograma montado.</div>
+                    ) : (
+                      baterias.map(bat => (
+                        <div key={bat._id} className="bg-[#0c0c0e] border border-zinc-900 p-4 rounded-xl flex justify-between items-center hover:border-zinc-800 transition-all">
+                          <div className="space-y-1 pr-2 truncate">
+                            <h3 className="text-sm font-black text-white uppercase truncate">{bat.nome}</h3>
+                            <p className="text-[10px] text-zinc-500 font-mono">
+                              ⏱️ {bat.tempoProva} min + {bat.voltasExtras} Voltas
+                            </p>
+                            <p className="text-[10px] text-zinc-400 font-sans font-bold uppercase truncate">
+                              Classes: <span className="text-red-500">{obterNomesCategorias(bat.categoriasIds || bat.categoriaId)}</span>
+                            </p>
+                          </div>
+                          
+                          {/* 🛠️ Grupo de Ações: Cronometragem e Edição */}
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button 
+                              onClick={() => handleEditarBateria(bat)}
+                              className="p-2 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-lg text-zinc-400 hover:text-amber-500 transition-colors"
+                              title="Editar Configurações da Bateria"
                             >
-                              <Zap size={12} className="text-emerald-500 group-hover:text-white" /> Iniciar Corrida
+                              <Settings size={14} />
+                            </button>
+
+                            <button 
+                              onClick={() => {
+                                router.push(`/admin/corrida?eventoId=${eventoAtivo?._id}&bateriaId=${bat._id}&origem=/admin`);
+                              }}
+                              className="px-3 py-2 bg-red-600 hover:bg-red-700 font-black text-[10px] font-sans uppercase tracking-wider text-white rounded-lg transition-all"
+                            >
+                              Ir para pista
                             </button>
                           </div>
-                        ))
-                      )}
-                    </div>
-                  </div>
-
-                </div>
-
-                {/* BLOCO INFERIOR: INSCRIÇÃO DE PILOTO E PILOTOS CONFIRMADOS */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
-                  
-                  {/* FORMULÁRIO DE INSCRIÇÃO */}
-                  <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                    <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
-                      <Users size={14} className="text-emerald-500" /> Inscrever Piloto
-                    </h2>
-                    <form onSubmit={handleCriarPiloto} className="space-y-3 font-mono text-xs">
-                      <input type="text" placeholder="Nome do Competidor" value={nomePiloto} onChange={e => setNomePiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required disabled={loadingPiloto} />
-                      <div className="grid grid-cols-2 gap-2">
-                        <input type="text" placeholder="Nº Moto/Carro" value={numeralPiloto} onChange={e => setNumeralPiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required disabled={loadingPiloto} />
-                        <input type="text" placeholder="Nº Transponder" value={transponderPiloto} onChange={e => setTransponderPiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" disabled={loadingPiloto} />
-                      </div>
-                      
-                      <div className="space-y-1.5">
-                        <label className="text-[10px] text-zinc-500 font-bold block uppercase">Categorias de Inscrição:</label>
-                        {/* AJUSTE: Adicionado scroll no seletor de categorias do piloto */}
-                        <div className="bg-black border border-zinc-900 rounded p-3 max-h-[115px] overflow-y-auto grid grid-cols-2 gap-2 custom-scrollbar">
-                          {categorias.map(cat => (
-                            <label key={cat._id} className="flex items-center gap-2 text-xs text-zinc-300 font-sans uppercase cursor-pointer select-none">
-                              <input type="checkbox" checked={catsPilotoSelecionadas.includes(cat._id)} onChange={() => handleToggleCategoriaPiloto(cat._id)} className="accent-emerald-500" disabled={loadingPiloto} />
-                              {cat.nome}
-                            </label>
-                          ))}
                         </div>
-                      </div>
-
-                      <button type="submit" disabled={loadingPiloto} className="w-full font-black uppercase bg-emerald-600 hover:bg-emerald-700 text-white py-2.5 rounded tracking-wider text-[11px] transition-all">
-                        {loadingPiloto ? "PROCESSANDO MATRÍCULA..." : "Confirmar Inscrição"}
-                      </button>
-                    </form>
-                  </div>
-
-                  {/* LISTA DE PILOTOS CADASTRADOS NO EVENTO */}
-                  <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                    <div className="flex justify-between items-center border-b border-zinc-900 pb-2">
-                      <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
-                        <Users size={14} className="text-zinc-400" /> Pilotos Confirmados
-                      </h2>
-                      <span className="text-[10px] font-mono font-bold bg-zinc-900 text-zinc-400 px-2 py-0.5 rounded border border-zinc-800">
-                        {pilotos.length} INSCRITOS
-                      </span>
-                    </div>
-
-                    {/* AJUSTE: max-h calibrado perfeitamente para bater a altura do formulário de inscrição do lado esquerdo */}
-                    <div className="space-y-2 max-h-[255px] overflow-y-auto pr-1 font-mono text-xs custom-scrollbar">
-                      {!pilotos || pilotos.length === 0 ? (
-                        <div className="text-center py-12 text-zinc-600 italic text-xs">Nenhum competidor inscrito neste evento.</div>
-                      ) : (
-                        pilotos.map(p => (
-                          <div key={p._id} className="bg-black border border-zinc-900 p-2.5 rounded-lg flex items-center justify-between gap-3 hover:border-zinc-800 transition-all">
-                            <div className="space-y-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                <span className="text-[11px] font-black text-emerald-500 bg-emerald-950/20 px-1.5 py-0.5 rounded border border-emerald-900/30 shrink-0">#{p.numeral}</span>
-                                <p className="text-white font-bold truncate uppercase text-[13px]">{p.nome}</p>
-                              </div>
-                              <p className="text-[10px] text-zinc-500 uppercase truncate">{obterNomesCategorias(p.categoriasIds) || 'Sem Categoria'}</p>
-                            </div>
-                            <div className="text-right shrink-0">
-                              <span className="text-[9px] block text-zinc-600 font-bold uppercase">RFID / CHIP</span>
-                              <span className="text-[10px] text-zinc-400 font-bold">{p.transponder || 'N/A'}</span>
-                            </div>
-                          </div>
-                        ))
-                      )}
-                    </div>
+                      ))
+                    )}
                   </div>
 
                 </div>
-
               </div>
             )}
           </div>
         )}
+
+        {/* OUTRAS ABAS (MANUTENÇÃO DO SEU COMPONENTE ORIGINAL) */}
+        {activeTab === 'pilotos' && (
+          <div className="max-w-7xl mx-auto space-y-6">
+             <div>
+                <h1 className="text-2xl font-black uppercase tracking-tight text-white">Inscrição Unificada de Competidores</h1>
+                <p className="text-xs text-zinc-500 font-mono">
+                  {eventoAtivo ? `Gerenciando grid oficial para: ${eventoAtivo.nome}` : 'Selecione um evento no Painel Principal primeiro.'}
+                </p>
+             </div>
+
+             {eventoAtivo ? (
+               <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+                  <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
+                     <div className="flex justify-between items-center">
+                       <h2 className="text-xs font-black uppercase tracking-wider text-white">
+                         {pilotoEmEdicao ? "Modo Alteração de Piloto" : "Ficha de Inscrição"}
+                       </h2>
+                       {pilotoEmEdicao && (
+                         <button onClick={() => { setPilotoEmEdicao(null); setNomePiloto(''); setNumeralPiloto(''); setTransponderPiloto(''); setCatsPilotoSelecionadas([]); }} className="text-[10px] font-mono text-zinc-500 hover:text-white uppercase underline">Cancelar</button>
+                       )}
+                     </div>
+
+                     <form onSubmit={handleCriarPiloto} className="space-y-3 font-mono text-xs">
+                        <input type="text" placeholder="Nome Completo" value={nomePiloto} onChange={e => setNomePiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
+                        <div className="grid grid-cols-3 gap-2">
+                           <input type="text" placeholder="# MOTO" value={numeralPiloto} onChange={e => setNumeralPiloto(e.target.value)} className="col-span-1 bg-black border border-zinc-800 rounded p-2 text-white text-center font-black outline-none uppercase" required />
+                           <input type="text" placeholder="Nº TRANSPONDER (CHIP)" value={transponderPiloto} onChange={e => setTransponderPiloto(e.target.value)} className="col-span-2 bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" />
+                        </div>
+
+                        <div className="space-y-1.5 pt-1">
+                           <label className="text-[10px] text-zinc-500 font-bold uppercase block">Inscrições em Categorias:</label>
+                           <div className="grid grid-cols-2 gap-1.5 max-h-[140px] overflow-y-auto p-1 bg-black rounded border border-zinc-900 custom-scrollbar">
+                             {categorias.map(cat => {
+                               const marcado = catsPilotoSelecionadas.includes(cat._id);
+                               return (
+                                 <button key={cat._id} type="button" onClick={() => handleToggleCategoriaPiloto(cat._id)} className={`p-1.5 rounded text-left truncate text-[10px] font-bold uppercase transition-all border ${marcado ? 'bg-red-950/20 text-red-400 border-red-900/60' : 'bg-zinc-900/40 text-zinc-400 border-transparent hover:border-zinc-800'}`}>
+                                   {cat.nome}
+                                 </button>
+                               );
+                             })}
+                           </div>
+                        </div>
+
+                        <button type="submit" disabled={loadingPiloto} className={`w-full font-black py-2.5 rounded text-[11px] uppercase tracking-wider text-white transition-all ${pilotoEmEdicao ? 'bg-amber-600 hover:bg-amber-700' : 'bg-red-600 hover:bg-red-700'}`}>
+                          {loadingPiloto ? "PROCESSANDO..." : pilotoEmEdicao ? "Salvar Alterações" : "Confirmar Inscrição"}
+                        </button>
+                     </form>
+                  </div>
+
+                  <div className="lg:col-span-2 bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden flex flex-col">
+                     <div className="p-4 border-b border-zinc-900/80 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase tracking-wider">
+                       Pilotos Inscritos nesta Etapa ({pilotos.length})
+                     </div>
+                     <div className="divide-y divide-zinc-900/60 max-h-[480px] overflow-y-auto custom-scrollbar">
+                        {pilotos.length === 0 ? (
+                          <div className="p-8 text-center text-zinc-600 font-mono text-xs italic">Nenhum piloto inscrito na etapa.</div>
+                        ) : (
+                          pilotos.map(p => (
+                            <div key={p._id} className="p-3 font-mono text-xs flex justify-between items-center hover:bg-zinc-900/20 transition-all">
+                               <div>
+                                  <p className="text-white font-sans font-black uppercase text-sm tracking-wide">{p.nome}</p>
+                                  <p className="text-zinc-500 text-[11px] mt-0.5">
+                                    Numeral: <span className="text-zinc-300 font-black">#{p.numeral}</span> — Chip: <span className="text-cyan-500 font-bold">{p.transponder || 'MANUAL'}</span>
+                                  </p>
+                                  <p className="text-[10px] text-zinc-400 uppercase font-sans font-bold mt-0.5 truncate max-w-[400px]">
+                                    Categorias: <span className="text-red-500">{obterNomesCategorias(p.categoriasIds)}</span>
+                                  </p>
+                               </div>
+                               <button onClick={() => handleEditarPiloto(p)} className="px-2.5 py-1.5 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white border border-zinc-800 rounded font-bold font-sans uppercase text-[10px] tracking-wider transition-colors">
+                                 Editar
+                               </button>
+                            </div>
+                          ))
+                        )}
+                     </div>
+                  </div>
+               </div>
+             ) : (
+               <div className="p-12 text-center text-zinc-500 bg-[#0c0c0e] border border-zinc-900 rounded-xl italic font-mono text-xs">
+                 Por favor, acesse o <b>Painel Principal</b>, clique sobre a Etapa operacional desejada e depois retorne aqui para inscrever e modificar os pilotos da prova.
+               </div>
+             )}
+          </div>
+        )}
+
+        {activeTab === 'configuracoes' && (
+          <div className="max-w-7xl mx-auto space-y-6">
+            <div>
+              <h1 className="text-2xl font-black uppercase tracking-tight text-white">Engenharia de Hardware & Redes</h1>
+              <p className="text-xs text-zinc-500 font-mono">Cadastre e inicialize as antenas e receptores RFID Zebra / Intelbras em campo.</p>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
+                <h2 className="text-xs font-black uppercase tracking-wider text-white">Nova Antena/Leitora</h2>
+                <form onSubmit={handleSalvarLeitora} className="space-y-3 font-mono text-xs">
+                  <input type="text" placeholder="NOME IDENTIFICADOR (EX: ANTENA LARGADA)" value={nomeLeitora} onChange={e => setNomeLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
+                  <input type="text" placeholder="IP DA DISPOSITIVO (EX: 192.168.1.100)" value={ipLeitora} onChange={e => setIpLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
+                  <div className="grid grid-cols-2 gap-2">
+                    <input type="number" placeholder="PORTA TCP" value={portaLeitora} onChange={e => setPortaLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
+                    <select value={modoLeitora} onChange={e => setModoLeitora(e.target.value as any)} className="w-full bg-black border border-zinc-800 rounded p-2 text-zinc-300 outline-none">
+                      <option value="SERVER">TCP SERVER</option>
+                      <option value="CLIENT">TCP CLIENT</option>
+                    </select>
+                  </div>
+                  <button type="submit" className="w-full bg-red-600 hover:bg-red-700 font-black py-2.5 rounded text-[11px] uppercase tracking-wider text-white">
+                    Registrar Dispositivo
+                  </button>
+                </form>
+              </div>
+
+              <div className="lg:col-span-2 space-y-6">
+                <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
+                  <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase tracking-wider">
+                    Barramento de Conexões de Antena
+                  </div>
+                  <div className="divide-y divide-zinc-900/60 font-mono text-xs">
+                    {leitoras.length === 0 ? (
+                      <div className="p-6 text-center text-zinc-600 italic">Nenhum dispositivo IP registrado no barramento local.</div>
+                    ) : (
+                      leitoras.map(l => (
+                        <div key={l._id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 hover:bg-zinc-900/10">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-bold text-white uppercase text-sm tracking-wide">{l.nome}</span>
+                              <span className="text-[9px] bg-black border border-zinc-800 px-1 py-0.2 rounded text-zinc-500">{l.modo}</span>
+                            </div>
+                            <p className="text-zinc-500 text-[11px] mt-0.5">Socket IP: <span className="text-zinc-300 font-bold">{l.ip}:{l.porta}</span></p>
+                          </div>
+                          
+                          <div className="flex items-center gap-4">
+                            <span className={`text-[10px] font-black uppercase px-2 py-0.5 rounded border ${
+                              l.status === 'conectado' ? 'border-emerald-900 text-emerald-500 bg-emerald-950/20' :
+                              l.status === 'tentando' ? 'border-amber-900 text-amber-500 bg-amber-950/20 animate-pulse' :
+                              'border-red-900 text-red-500 bg-red-950/20'
+                            }`}>
+                              {l.status}
+                            </span>
+                            <button
+                              onClick={() => handleToggleLeitoraHardware(l)}
+                              disabled={l.status === 'tentando' || l.status === 'iniciada'}
+                              className={`px-3 py-1.5 rounded text-[10px] font-black uppercase tracking-wider font-sans transition-all border ${
+                                l.status === 'conectado' ? 'bg-zinc-900 text-red-500 border-zinc-800 hover:bg-red-950/20 hover:border-red-900' : 'bg-emerald-600 text-white border-transparent hover:bg-emerald-700'
+                              }`}
+                            >
+                              {l.status === 'conectado' ? 'Derrubar' : 'Ativar'}
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+
+                <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
+                  <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase tracking-wider flex justify-between items-center">
+                    <span>Console RFID — Log de Leitura Direta do Campo (Live Test)</span>
+                    <button onClick={() => setUltimasTagsLidas([])} className="text-[9px] text-zinc-500 hover:text-white uppercase underline font-normal">Limpar Buffer</button>
+                  </div>
+                  <div className="p-4 max-h-[220px] overflow-y-auto font-mono text-[11px] space-y-1 custom-scrollbar bg-black/40">
+                    {ultimasTagsLidas.length === 0 ? (
+                      <div className="text-zinc-700 text-center italic py-4">Aguardando passagem de tags pelas antenas ativas...</div>
+                    ) : (
+                      ultimasTagsLidas.map((item, index) => (
+                        <div key={index} className="flex justify-between text-zinc-400 py-0.5 border-b border-zinc-900/30 hover:bg-zinc-900/10">
+                          <span>⏱️ {new Date(item.dataHora).toLocaleTimeString('pt-BR')}.{new Date(item.dataHora).getMilliseconds()} — RFID TAG: <strong className="text-cyan-400 font-bold">{item.tag}</strong></span>
+                          <span className="text-zinc-600 text-[10px] font-bold uppercase">Origem: {item.antena}</span>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
     </div>
   );
