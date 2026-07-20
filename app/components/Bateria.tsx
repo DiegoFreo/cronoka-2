@@ -157,7 +157,6 @@ export default function Baterias() {
 
                                         {/* Hora Início */}
                                         <td className="py-4 px-6 font-mono text-zinc-400">{formatarHora(bateria.horaInicio)}</td>
-
                                         {/* Hora Fim */}
                                         <td className="py-4 px-6 font-mono text-zinc-400">{formatarHora(bateria.horaFim)}</td>
 
