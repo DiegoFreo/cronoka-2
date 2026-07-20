@@ -37,3 +37,61 @@ export interface Piloto {
     createdAt?: Date;
     updatedAt?: Date;
 }
+export interface ResultadoCorrida {
+    _id: string;
+    bateriaId: string;
+    pilotoId: string;
+    tempoTotal: number;
+    voltasCompletadas: number;
+    melhorVolta: number;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
+export interface ResultadoCorridaDetalhado {
+    _id: string;
+    bateriaId: string;
+    pilotoId: string;
+    tempoTotal: number;
+    voltasCompletadas: number;
+    melhorVolta: number;
+    voltas: Volta[];
+    createdAt?: Date;
+    updatedAt?: Date;
+}
+export interface Volta {
+    _id: string;
+    resultadoCorridaId: string;
+    tempoVolta: number;
+    numeroVolta: number;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
+export interface TagLog {
+    tag: string;
+    dataHora: string;
+    antena: string;
+}
+export interface GlobalLeitoras {
+    [key: string]: {
+        socketServer?: any;
+        socketClient?: any;
+        status: 'conectado' | 'desconectado' | 'tentando';
+        tagsRecentes: TagLog[];
+    };
+}
+export interface LeitorasAtivas {
+    [key: string]: {
+        socketServer?: any;
+        socketClient?: any;
+        status: 'conectado' | 'desconectado' | 'tentando';
+        tagsRecentes: TagLog[];
+    };
+}
+export interface Usuario{
+    _id: string;
+    nameUser: string;
+    emailUser: string;
+    nivelUser: 'A' | 'S' | 'C';
+    createdAt?: Date;
+    updatedAt?: Date;
+}
