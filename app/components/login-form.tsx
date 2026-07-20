@@ -4,13 +4,13 @@ import { signIn, getSession } from 'next-auth/react';
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
 import * as z from 'zod';
+import { Usuario } from '@/app/types/types-corrida';
 import { useRouter } from 'next/navigation';
 
 // 1. Definimos o esquema de validação usando Zod
 const loginSchema = z.object({
   email: z.string().email({ message: 'Invalid email address' }),
   password: z.string().min(6, { message: 'Password must be at least 6 characters' }),
-  nivelUser: z.enum(['A', 'S', 'C'], { message: 'Invalid user level' }), // A = Admin, S = Secretaria, C = Cronometrista
 });
 
 //Tipagem baseada no esquema
@@ -42,7 +42,6 @@ export function LoginForm() {
     const result = await signIn('credentials', {
       emailUser: data.email,
       passworUser: data.password,
-      nivelUser: data.nivelUser,
       redirect: false, // Redireciona automaticamente após o login
     });
 
@@ -53,8 +52,11 @@ export function LoginForm() {
     } else {
       if (result?.ok) {
         // 2. Buscamos a sessão atualizada que acabou de ser criada
-        const session = await getSession();
-        const nivelUser = session?.user?.nivelUser;
+        const session = await getSession().catch((err) => {
+          console.error('Error fetching session:', err);
+          return null;
+        }) as Usuario | null;
+        const nivelUser = session?.nivelUser;
 
         console.log('Login bem-sucedido. Nível do usuário:', nivelUser);
         // 3. Redirecionamento baseado no nível (Role)
