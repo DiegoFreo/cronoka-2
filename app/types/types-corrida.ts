@@ -30,8 +30,9 @@ export interface Evento {
 export interface Piloto {
     _id: string;
     nome: string;
-    numeral: string;
-    categoriaId: string;
+    numero_piloto: string;
+    categorias: string[];
+    tag: string;
     eventoId: string;
     createdAt?: Date;
     updatedAt?: Date;
