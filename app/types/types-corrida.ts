@@ -12,4 +12,27 @@ export interface Bateria {
   horaFim: string | null;
   resultadoCorridaId?: string;
 }
-
+export interface Categoria {
+    _id: string;
+    nome: string;
+    eventoId: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
+export interface Evento {
+    _id: string;
+    nome: string;
+    dataEvento: Date;
+    localEvento: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
+export interface Piloto {
+    _id: string;
+    nome: string;
+    numeral: string;
+    categoriaId: string;
+    eventoId: string;
+    createdAt?: Date;
+    updatedAt?: Date;
+}
