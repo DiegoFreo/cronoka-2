@@ -4,7 +4,7 @@ import { useRouter } from 'next/navigation';
 import { 
   Users, Timer, Layers, Calendar, MapPin, 
   Zap, FileText, Cpu, BarChart3, ChevronRight, ArrowLeft, Flag, Settings, LogOut, CheckCircle2, FlagTriangleRight,
-  AirVent, Loader2
+  AirVent, Loader2, FileCode2, Play, Square, Folder
 } from 'lucide-react';
 
 interface Evento { 
@@ -22,7 +22,7 @@ interface Bateria {
   nome: string; 
   tempoProva: number; 
   voltasExtras: number; 
-  categoriaId: string[] | any; // Ajustado para aceitar objetos vindos populados
+  categoriaId: string[] | any;
   categoriasIds?: string[] | any;
 }
 
@@ -70,6 +70,11 @@ export default function PainelAdmin() {
   const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
   const [ultimasTagsLidas, setUltimasTagsLidas] = useState<{ tag: string; dataHora: string; antena: string }[]>([]);
 
+  // 📂 ESTADOS DE LEITURA POR ARQUIVO DE LOG (NOVO)
+  const [caminhoArquivoLog, setCaminhoArquivoLog] = useState<string>('C:/cronometragem/Dados.txt');
+  const [arquivoLendo, setArquivoLendo] = useState<boolean>(false);
+  const [statusLeituraArquivo, setStatusLeituraArquivo] = useState<string>('Aguardando inicialização...');
+
   // Estados de Carregamento (Loadings)
   const [loadingEvento, setLoadingEvento] = useState(false);
   const [loadingCategoria, setLoadingCategoria] = useState(false);
@@ -89,7 +94,6 @@ export default function PainelAdmin() {
   const [voltasBat, setVoltasBat] = useState('2');
   const [catsSelecionadas, setCatsSelecionadas] = useState<string[]>([]);
   
-  // 🔥 NOVO: Controle de estado para edição da bateria selecionada
   const [bateriaEmEdicao, setBateriaEmEdicao] = useState<Bateria | null>(null);
 
   // Estados do formulário de piloto
@@ -98,7 +102,6 @@ export default function PainelAdmin() {
   const [transponderPiloto, setTransponderPiloto] = useState('');
   const [catsPilotoSelecionadas, setCatsPilotoSelecionadas] = useState<string[]>([]);
   
-  // Controle de estado para edição do piloto selecionado
   const [pilotoEmEdicao, setPilotoEmEdicao] = useState<Piloto | null>(null);
 
   // Estados do formulário de leitoras
@@ -114,75 +117,6 @@ export default function PainelAdmin() {
   }, [leitoras]);
 
   useEffect(() => {
-  if (leitorasRef.current.length === 0) return;
-
-  const checarStatusEHardware = async () => {
-    let todasAsTagsDessaRodada: { tag: string; dataHora: string; antena: string }[] = [];
-    
-    const updatedLeitoras = await Promise.all(
-      leitorasRef.current.map(async (leitora) => {
-        if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
-
-        try {
-          // 💡 Mudamos para GET usando o IP como parâmetro limpo na URL
-          // Isso evita desalinhamento de chaves que acontece no corpo do POST
-          const url = `/api/leitora?ip=${encodeURIComponent(leitora.ip)}&id=${encodeURIComponent(leitora._id)}`;
-          const res = await fetch(url, { method: 'GET' });
-          
-          if (res.ok) {
-            const dados = await res.json();
-            
-            if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
-              const tagsComNomeOrigem = dados.tagsRecentes.map((t: { tag: string; dataHora: string }) => ({
-                ...t,
-                antena: leitora.nome // Vincula o nome amigável da leitora do seu sistema
-              }));
-              todasAsTagsDessaRodada = [...todasAsTagsDessaRodada, ...tagsComNomeOrigem];
-            }
-
-            return { 
-              ...leitora, 
-              status: dados.status, 
-              ativa: dados.status === 'conectado' 
-            };
-          }
-        } catch (err) {
-          console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
-        }
-        return leitora;
-      })
-    );
-
-    setLeitoras(updatedLeitoras);
-
-    if (todasAsTagsDessaRodada.length > 0) {
-      setUltimasTagsLidas((prevAcumulado) => {
-        const listaMesclada = [...todasAsTagsDessaRodada, ...prevAcumulado];
-        
-        const idsUnicos = new Set();
-        const listaFiltrada = listaMesclada.filter((item) => {
-          // Garante unicidade combinando tag e hora
-          const chaveUnica = `${item.tag}-${item.dataHora}`;
-          if (idsUnicos.has(chaveUnica)) return false;
-          idsUnicos.add(chaveUnica);
-          return true;
-        });
-
-        return listaFiltrada
-          .sort((a, b) => b.dataHora.localeCompare(a.dataHora))
-          .slice(0, 20); // Mantém apenas o topo histórico de 20 leituras
-      });
-    }
-  };
-
-  checarStatusEHardware();
-  const intervalo = setInterval(checarStatusEHardware, 5000);
-
-  return () => clearInterval(intervalo);
-}, []);
-
-  // Efeito para monitorar status e acumular tags em tempo real
-  useEffect(() => {
     if (leitorasRef.current.length === 0) return;
 
     const checarStatusEHardware = async () => {
@@ -193,24 +127,25 @@ export default function PainelAdmin() {
           if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
 
           try {
-            const res = await fetch('/api/leitora', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'STATUS', id: leitora._id, ip: leitora.ip, modo: leitora.modo })
-            });
+            const url = `/api/leitora?ip=${encodeURIComponent(leitora.ip)}&id=${encodeURIComponent(leitora._id)}`;
+            const res = await fetch(url, { method: 'GET' });
             
             if (res.ok) {
               const dados = await res.json();
               
               if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
-                const tagsComNomeOrigem = dados.tagsRecentes.map((t: any) => ({
+                const tagsComNomeOrigem = dados.tagsRecentes.map((t: { tag: string; dataHora: string }) => ({
                   ...t,
                   antena: leitora.nome 
                 }));
                 todasAsTagsDessaRodada = [...todasAsTagsDessaRodada, ...tagsComNomeOrigem];
               }
 
-              return { ...leitora, status: dados.status, ativa: dados.status === 'conectado' };
+              return { 
+                ...leitora, 
+                status: dados.status, 
+                ativa: dados.status === 'conectado' 
+              };
             }
           } catch (err) {
             console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
@@ -222,7 +157,6 @@ export default function PainelAdmin() {
       setLeitoras(updatedLeitoras);
 
       if (todasAsTagsDessaRodada.length > 0) {
-        
         setUltimasTagsLidas((prevAcumulado) => {
           const listaMesclada = [...todasAsTagsDessaRodada, ...prevAcumulado];
           
@@ -246,6 +180,48 @@ export default function PainelAdmin() {
 
     return () => clearInterval(intervalo);
   }, []);
+
+  // 📁 EFEITO DE POLLING EM TEMPO REAL PARA O ARQUIVO DE LOG (NOVO)
+  useEffect(() => {
+    if (!arquivoLendo) return;
+
+    const lerArquivoEmTempoReal = async () => {
+      try {
+        const res = await fetch(`/api/leitora-arquivo?caminho=${encodeURIComponent(caminhoArquivoLog)}`);
+        if (res.ok) {
+          const dados = await res.json();
+          setStatusLeituraArquivo(`Lendo arquivo ativo (${dados.totalLido || 0} linhas processadas)`);
+
+          if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
+            const novastags = dados.tagsRecentes.map((t: any) => ({
+              tag: t.tag,
+              dataHora: t.dataHora || new Date().toISOString(),
+              antena: 'LOG_ARQUIVO'
+            }));
+
+            setUltimasTagsLidas((prev) => {
+              const listaMesclada = [...novastags, ...prev];
+              const idsUnicos = new Set();
+              const listaFiltrada = listaMesclada.filter((item) => {
+                const chave = `${item.tag}-${item.dataHora}`;
+                if (idsUnicos.has(chave)) return false;
+                idsUnicos.add(chave);
+                return true;
+              });
+              return listaFiltrada.slice(0, 20);
+            });
+          }
+        } else {
+          setStatusLeituraArquivo('Erro ao acessar o arquivo especificado.');
+        }
+      } catch (error) {
+        setStatusLeituraArquivo('Falha de conexão com a API de arquivo.');
+      }
+    };
+
+    const intervaloArquivo = setInterval(lerArquivoEmTempoReal, 200);
+    return () => clearInterval(intervaloArquivo);
+  }, [arquivoLendo, caminhoArquivoLog]);
 
   useEffect(() => {
     carregarPainelInicial();
@@ -292,7 +268,7 @@ export default function PainelAdmin() {
     setTempoBat('15');
     setVoltasBat('2');
     setCatsSelecionadas([]); 
-    setBateriaEmEdicao(null); // Reseta a edição de bateria ao entrar/mudar de evento
+    setBateriaEmEdicao(null);
     
     try {
       const [resCat, resBat, resPil] = await Promise.all([
@@ -345,9 +321,6 @@ export default function PainelAdmin() {
     }
   };
 
-  /**
-   * ⏱️ ATUALIZAÇÃO: Gerenciamento Unificado de Baterias (Cadastro e Alteração)
-   */
   const handleCriarBateria = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nomeBat.trim() || !eventoAtivo || catsSelecionadas.length === 0) {
@@ -357,7 +330,6 @@ export default function PainelAdmin() {
 
     setLoadingBateria(true);
     try {
-      // Modifica dinamicamente a URL e Método se estiver editando ou salvando novo
       const URL_ALVO = bateriaEmEdicao ? `/api/bateria?id=${bateriaEmEdicao._id}` : '/api/bateria';
       const METODO = bateriaEmEdicao ? 'PUT' : 'POST';
 
@@ -365,23 +337,21 @@ export default function PainelAdmin() {
         method: METODO,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          _id: bateriaEmEdicao?._id, // Envia o ID caso seja edição
+          _id: bateriaEmEdicao?._id,
           nome: nomeBat.toUpperCase(),
           tempoProva: Number(tempoBat),
           voltasExtras: Number(voltasBat),
-          categoriaId: catsSelecionadas, // Envia o array de IDs selecionados
+          categoriaId: catsSelecionadas,
           eventoId: eventoAtivo._id
         })
       });
-      console.log('Categorias selecionadas:', catsSelecionadas);
-      console.log('Resposta da API:', res);
 
       if (res.ok) {
         setNomeBat('');
         setTempoBat('15');
         setVoltasBat('2');
         setCatsSelecionadas([]);
-        setBateriaEmEdicao(null); // Sai do modo de edição
+        setBateriaEmEdicao(null);
         await entrarNoEvento(eventoAtivo);
       } else {
         alert(bateriaEmEdicao ? "Erro ao atualizar a bateria." : "Erro ao criar bateria.");
@@ -390,17 +360,12 @@ export default function PainelAdmin() {
     setLoadingBateria(false);
   };
 
-  /**
-   * 🎯 INTERCEPTA CLIQUE DA TABELA E POPULA O FORMULÁRIO DE EDIÇÃO DA BATERIA
-   */
   const handleEditarBateria = (bateria: Bateria) => {
     setBateriaEmEdicao(bateria);
-    
     setNomeBat(bateria.nome);
     setTempoBat(String(bateria.tempoProva || '15'));
     setVoltasBat(String(bateria.voltasExtras || '2'));
     
-    // Tratamento das categorias vinculadas (Suporta se vier como Array de IDs ou Array de Objetos)
     const origemCategorias = bateria.categoriaId || bateria.categoriaId || [];
     const idsTratados = origemCategorias.map((cat: any) => {
       return typeof cat === 'object' && cat !== null ? cat._id : cat;
@@ -821,7 +786,7 @@ export default function PainelAdmin() {
                     </div>
                   </div>
 
-                  {/* ⏱️ FORMULÁRIO DE BATERIA ATUALIZADO (CADASTRO E EDIÇÃO) */}
+                  {/* FORMULÁRIO DE BATERIA */}
                   <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
                     <div className="flex justify-between items-center">
                       <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
@@ -897,7 +862,7 @@ export default function PainelAdmin() {
                     </form>
                   </div>
 
-                  {/* 🏁 LISTA DE BATERIAS LANÇADAS COM O BOTÃO DE EDITAÇÃO */}
+                  {/* LISTA DE BATERIAS LANÇADAS */}
                   <div className="space-y-2">
                     <h2 className="text-xs font-black uppercase tracking-wider text-zinc-500 font-mono">Cronogramas de Corrida</h2>
                     {!baterias || baterias.length === 0 ? (
@@ -915,7 +880,6 @@ export default function PainelAdmin() {
                             </p>
                           </div>
                           
-                          {/* 🛠️ Grupo de Ações: Cronometragem e Edição */}
                           <div className="flex items-center gap-2 shrink-0">
                             <button 
                               onClick={() => handleEditarBateria(bat)}
@@ -945,7 +909,7 @@ export default function PainelAdmin() {
           </div>
         )}
 
-        {/* OUTRAS ABAS (MANUTENÇÃO DO SEU COMPONENTE ORIGINAL) */}
+        {/* ABA CADASTRO PILOTOS */}
         {activeTab === 'pilotos' && (
           <div className="max-w-7xl mx-auto space-y-6">
              <div>
@@ -1030,33 +994,100 @@ export default function PainelAdmin() {
           </div>
         )}
 
+        {/* ⚙️ ABA CONFIGURAÇÕES (INCLUI HARDWARE IP E A NOVA LEITURA DE ARQUIVO LOG) */}
         {activeTab === 'configuracoes' && (
           <div className="max-w-7xl mx-auto space-y-6">
             <div>
               <h1 className="text-2xl font-black uppercase tracking-tight text-white">Engenharia de Hardware & Redes</h1>
-              <p className="text-xs text-zinc-500 font-mono">Cadastre e inicialize as antenas e receptores RFID Zebra / Intelbras em campo.</p>
+              <p className="text-xs text-zinc-500 font-mono">Cadastre leitoras IP ou utilize o modo de leitura contingencial através de arquivo texto gerado por software externo.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-              <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                <h2 className="text-xs font-black uppercase tracking-wider text-white">Nova Antena/Leitora</h2>
-                <form onSubmit={handleSalvarLeitora} className="space-y-3 font-mono text-xs">
-                  <input type="text" placeholder="NOME IDENTIFICADOR (EX: ANTENA LARGADA)" value={nomeLeitora} onChange={e => setNomeLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
-                  <input type="text" placeholder="IP DA DISPOSITIVO (EX: 192.168.1.100)" value={ipLeitora} onChange={e => setIpLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
-                  <div className="grid grid-cols-2 gap-2">
-                    <input type="number" placeholder="PORTA TCP" value={portaLeitora} onChange={e => setPortaLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
-                    <select value={modoLeitora} onChange={e => setModoLeitora(e.target.value as any)} className="w-full bg-black border border-zinc-800 rounded p-2 text-zinc-300 outline-none">
-                      <option value="SERVER">TCP SERVER</option>
-                      <option value="CLIENT">TCP CLIENT</option>
-                    </select>
+              
+              {/* CADASTRO DE LEITORAS IP & CONFIGURAÇÃO DE ARQUIVO */}
+              <div className="space-y-6">
+                
+                {/* 1. CONFIGURAÇÃO LEITORA IP */}
+                <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
+                  <h2 className="text-xs font-black uppercase tracking-wider text-white flex items-center gap-2">
+                    <Cpu size={15} className="text-red-500" /> Nova Antena/Leitora IP
+                  </h2>
+                  <form onSubmit={handleSalvarLeitora} className="space-y-3 font-mono text-xs">
+                    <input type="text" placeholder="NOME IDENTIFICADOR (EX: ANTENA LARGADA)" value={nomeLeitora} onChange={e => setNomeLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none uppercase" required />
+                    <input type="text" placeholder="IP DA DISPOSITIVO (EX: 192.168.1.100)" value={ipLeitora} onChange={e => setIpLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
+                    <div className="grid grid-cols-2 gap-2">
+                      <input type="number" placeholder="PORTA TCP" value={portaLeitora} onChange={e => setPortaLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
+                      <select value={modoLeitora} onChange={e => setModoLeitora(e.target.value as any)} className="w-full bg-black border border-zinc-800 rounded p-2 text-zinc-300 outline-none">
+                        <option value="SERVER">TCP SERVER</option>
+                        <option value="CLIENT">TCP CLIENT</option>
+                      </select>
+                    </div>
+                    <button type="submit" className="w-full bg-red-600 hover:bg-red-700 font-black py-2.5 rounded text-[11px] uppercase tracking-wider text-white transition-all">
+                      Registrar Dispositivo
+                    </button>
+                  </form>
+                </div>
+
+                {/* 2. 🔥 NOVO: MÓDULO DE LEITURA CONTINGENCIAL VIA ARQUIVO TXT */}
+                <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
+                  <div className="flex items-center gap-2">
+                    <FileCode2 size={16} className="text-cyan-500" />
+                    <h2 className="text-xs font-black uppercase tracking-wider text-white">Leitura de Arquivo (Contingência)</h2>
                   </div>
-                  <button type="submit" className="w-full bg-red-600 hover:bg-red-700 font-black py-2.5 rounded text-[11px] uppercase tracking-wider text-white">
-                    Registrar Dispositivo
-                  </button>
-                </form>
+                  <p className="text-[11px] text-zinc-500 font-mono">
+                    Monitore em tempo real um arquivo .txt gerado por outro software para processar as passagens.
+                  </p>
+
+                  <div className="space-y-3 font-mono text-xs">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 font-bold uppercase block mb-1">Caminho do Arquivo Local (.txt):</label>
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="text" 
+                          value={caminhoArquivoLog} 
+                          onChange={(e) => setCaminhoArquivoLog(e.target.value)} 
+                          placeholder="C:/caminho/do/arquivo/Dados.txt"
+                          className="flex-1 bg-black border border-zinc-800 rounded p-2 text-cyan-400 font-mono outline-none text-[11px]" 
+                          disabled={arquivoLendo}
+                        />
+                      </div>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setArquivoLendo(!arquivoLendo)}
+                      className={`w-full font-black py-2.5 rounded text-[11px] uppercase tracking-wider transition-all flex items-center justify-center gap-2 ${
+                        arquivoLendo 
+                          ? 'bg-amber-600 hover:bg-amber-700 text-white' 
+                          : 'bg-cyan-600 hover:bg-cyan-700 text-white'
+                      }`}
+                    >
+                      {arquivoLendo ? (
+                        <>
+                          <Square size={14} fill="currentColor" /> Parar Leitura de Arquivo
+                        </>
+                      ) : (
+                        <>
+                          <Play size={14} fill="currentColor" /> Iniciar Leitura do Arquivo
+                        </>
+                      )}
+                    </button>
+
+                    <div className="p-2 bg-black/60 border border-zinc-900 rounded text-[10px] font-mono text-zinc-400">
+                      <span className="font-bold uppercase text-zinc-500 block mb-0.5">Status da Contingência:</span>
+                      <span className={arquivoLendo ? 'text-emerald-400 font-bold' : 'text-zinc-600'}>
+                        {statusLeituraArquivo}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
               </div>
 
+              {/* BARRAMENTO E LOG DE LEITURAS DA PISTA */}
               <div className="lg:col-span-2 space-y-6">
+                
+                {/* BARRAMENTO DE DISPOSITIVOS IP */}
                 <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
                   <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase tracking-wider">
                     Barramento de Conexões de Antena
@@ -1099,24 +1130,28 @@ export default function PainelAdmin() {
                   </div>
                 </div>
 
+                {/* LOG DAS LEITURAS EM TEMPO REAL (TESTE EM PISTA OU ARQUIVO) */}
                 <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
                   <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase tracking-wider flex justify-between items-center">
-                    <span>Console RFID — Log de Leitura Direta do Campo (Live Test)</span>
+                    <span>Console RFID — Log de Leitura Direta (Live Test / Arquivo)</span>
                     <button onClick={() => setUltimasTagsLidas([])} className="text-[9px] text-zinc-500 hover:text-white uppercase underline font-normal">Limpar Buffer</button>
                   </div>
-                  <div className="p-4 max-h-[220px] overflow-y-auto font-mono text-[11px] space-y-1 custom-scrollbar bg-black/40">
+                  <div className="p-4 max-h-[260px] overflow-y-auto font-mono text-[11px] space-y-1 custom-scrollbar bg-black/40">
                     {ultimasTagsLidas.length === 0 ? (
-                      <div className="text-zinc-700 text-center italic py-4">Aguardando passagem de tags pelas antenas ativas...</div>
+                      <div className="text-zinc-700 text-center italic py-4">Aguardando passagem de tags pelas antenas ativas ou arquivo...</div>
                     ) : (
                       ultimasTagsLidas.map((item, index) => (
-                        <div key={index} className="flex justify-between text-zinc-400 py-0.5 border-b border-zinc-900/30 hover:bg-zinc-900/10">
+                        <div key={index} className="flex justify-between text-zinc-400 py-1 border-b border-zinc-900/30 hover:bg-zinc-900/10">
                           <span>⏱️ {new Date(item.dataHora).toLocaleTimeString('pt-BR')}.{new Date(item.dataHora).getMilliseconds()} — RFID TAG: <strong className="text-cyan-400 font-bold">{item.tag}</strong></span>
-                          <span className="text-zinc-600 text-[10px] font-bold uppercase">Origem: {item.antena}</span>
+                          <span className={`text-[10px] font-bold uppercase ${item.antena === 'LOG_ARQUIVO' ? 'text-amber-500' : 'text-zinc-600'}`}>
+                            Origem: {item.antena}
+                          </span>
                         </div>
                       ))
                     )}
                   </div>
                 </div>
+
               </div>
             </div>
           </div>

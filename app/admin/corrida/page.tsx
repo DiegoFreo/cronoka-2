@@ -3,7 +3,7 @@ import React, { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { 
   Volume2, Play, Pause, UserPlus, 
-  Settings, FileText, ArrowLeft, Loader2 
+  Settings, FileText, ArrowLeft, Loader2, Radio 
 } from 'lucide-react';
 
 interface Evento {
@@ -47,6 +47,9 @@ function ConteudoCronometragem() {
   const eventoId = searchParams.get('eventoId');
   const origem = searchParams.get('origem');
 
+  // Ajuste o caminho padrão do arquivo do leitor aqui (ou via parâmetro de busca se preferir)
+  const caminhoLogRfid = searchParams.get('caminhoLog') || 'C:\\TagFX7400\\Dados.txt';
+
   // Estados dos Dados Backend
   const [evento, setEvento] = useState<Evento | null>(null);
   const [todasBaterias, setTodasBaterias] = useState<Bateria[]>([]);
@@ -58,6 +61,21 @@ function ConteudoCronometragem() {
   const [corridaAtiva, setCorridaAtiva] = useState(false);
   const intervaloRef = useRef<NodeJS.Timeout | null>(null);
   const momentoUltimoStartRef = useRef<number>(0);
+
+  // MOMENTO REAL DA LARGADA (Para sincronizar o horário individual das tags do arquivo)
+  const momentoLargadaRef = useRef<number | null>(null);
+
+  // Ref para garantir que os handlers sempre acessem a lista e estado mais recentes sem problemas de closure
+  const pilotosRef = useRef<Piloto[]>([]);
+  const tempoDecorridoRef = useRef<number>(0);
+
+  useEffect(() => {
+    pilotosRef.current = pilotos;
+  }, [pilotos]);
+
+  useEffect(() => {
+    tempoDecorridoRef.current = tempoDecorridoMs;
+  }, [tempoDecorridoMs]);
 
   // ESTADOS DE DESEMPENHO DA PISTA
   const [idPilotoMelhorVolta, setIdPilotoMelhorVolta] = useState<string | null>(null);
@@ -91,6 +109,47 @@ function ConteudoCronometragem() {
       if (intervaloRef.current) clearInterval(intervaloRef.current);
     };
   }, [corridaAtiva, tempoDecorridoMs]);
+
+  // 📡 LEITURA AUTOMÁTICA CONTINUA DO ARQUIVO RFID (Zebra FX7400)
+  useEffect(() => {
+    let rfidInterval: NodeJS.Timeout | null = null;
+
+    if (corridaAtiva) {
+      rfidInterval = setInterval(async () => {
+        try {
+          const res = await fetch(`/api/leitora-arquivo?caminho=${encodeURIComponent(caminhoLogRfid)}`);
+          if (res.ok) {
+            const data = await res.json();
+            
+            // Se encontrou novas leituras no arquivo
+            if (data.tagsRecentes && data.tagsRecentes.length > 0) {
+              data.tagsRecentes.forEach((itemTag: { tag: string; tagCompleta?: string; timestampMs?: number }) => {
+                const tagIdentificada = itemTag.tag;
+                
+                // Busca o piloto correspondente pelo transponder ou numeral extraído
+                const pilotoEncontrado = pilotosRef.current.find(
+                  p => p.transponder === tagIdentificada || 
+                       p.transponder === itemTag.tagCompleta ||
+                       p.numeral === tagIdentificada
+                );
+
+                if (pilotoEncontrado) {
+                  // Passa o numeral do piloto E o timestamp gravado na tag do arquivo
+                  processarPassagemAutomatica(pilotoEncontrado.numeral, itemTag.timestampMs);
+                }
+              });
+            }
+          }
+        } catch (error) {
+          console.error("Erro ao ler log do leitor RFID:", error);
+        }
+      }, 100); // Executa a leitura a cada 100ms
+    }
+
+    return () => {
+      if (rfidInterval) clearInterval(rfidInterval);
+    };
+  }, [corridaAtiva, caminhoLogRfid]);
 
   // 🔄 1. SYNC BACKEND: Polling com mesclagem inteligente de dados locais
   useEffect(() => {
@@ -198,6 +257,7 @@ function ConteudoCronometragem() {
       setTempoDecorridoMs(0);
       setIdPilotoMelhorVolta(null);
       setTempoMelhorVoltaMs(null);
+      momentoLargadaRef.current = null; // Reinicia momento da largada
 
       const arrayCategoriasBruto = dadosBat.categoriasIds || dadosBat.categoriesIds || dadosBat.categoriaId || [];
       const catIdsBateria = (Array.isArray(arrayCategoriasBruto) ? arrayCategoriasBruto : [])
@@ -255,6 +315,11 @@ function ConteudoCronometragem() {
     const proximoEstado = !corridaAtiva;
     setCorridaAtiva(proximoEstado);
 
+    // Se estiver dando a largada pela primeira vez, grava a hora de início exata do relógio
+    if (proximoEstado && !momentoLargadaRef.current) {
+      momentoLargadaRef.current = Date.now();
+    }
+
     if (bateriaId) {
       try {
         await fetch(`/api/bateria/${bateriaId}`, {
@@ -266,6 +331,82 @@ function ConteudoCronometragem() {
         console.error("Erro ao alterar status da bateria no MongoDB:", err);
       }
     }
+  };
+
+  // Função interna para computar a passagem (usada tanto no manual quanto nas tags automáticas)
+  const processarPassagemAutomatica = (numeralMoto: string, timestampTagMs?: number) => {
+    // Se a tag veio com o timestamp do arquivo de log, calcula a diferença em relação à largada
+    // Se não veio (ex: inserção manual), utiliza o tempo decorrido do relógio
+    let tempoLeituraNaProvaMs = tempoDecorridoRef.current;
+
+    if (timestampTagMs && momentoLargadaRef.current) {
+      tempoLeituraNaProvaMs = Math.max(0, timestampTagMs - momentoLargadaRef.current);
+    }
+
+    const motoLimpa = numeralMoto.trim();
+    if (!motoLimpa) return;
+
+    const pilotoDono = pilotosRef.current.find(p => String(p.numeral) === motoLimpa);
+    if (!pilotoDono) return;
+
+    // Trava de passagem mínima (ex: ignora leituras duplicadas dentro de 5 segundos)
+    const tempoMinimoVoltaMs = 5000; 
+    if (pilotoDono.ultimaPassagemMs && (tempoLeituraNaProvaMs - pilotoDono.ultimaPassagemMs) < tempoMinimoVoltaMs) {
+      return; 
+    }
+
+    setPilotos(pilotosAtuais => {
+      let novaMelhorVoltaMundial = tempoMelhorVoltaMs;
+      let idDonoDaMelhorVolta = idPilotoMelhorVolta;
+
+      const listaGridAtualizado = pilotosAtuais.map(p => {
+        if (String(p.numeral) === motoLimpa) {
+          const voltasAtuais = (p.voltas || 0) + 1;
+          const momentoAnterior = p.ultimaPassagemMs || 0;
+          const tempoDestaVolta = tempoLeituraNaProvaMs - momentoAnterior;
+
+          const menorVoltaAnterior = p.melhorVoltaMs || 0;
+          const novaMelhorVoltaPiloto = (menorVoltaAnterior === 0 || tempoDestaVolta < menorVoltaAnterior) 
+            ? tempoDestaVolta 
+            : menorVoltaAnterior;
+
+          if (novaMelhorVoltaMundial === null || tempoDestaVolta < novaMelhorVoltaMundial) {
+            novaMelhorVoltaMundial = tempoDestaVolta;
+            idDonoDaMelhorVolta = p._id;
+          }
+
+          const historicoAtual = p.historicoVoltas || [];
+
+          return {
+            ...p,
+            voltas: voltasAtuais,
+            tempoTotalMs: tempoLeituraNaProvaMs,
+            melhorVoltaMs: novaMelhorVoltaPiloto,
+            ultimaPassagemMs: tempoLeituraNaProvaMs,
+            ultimaVoltaMs: tempoDestaVolta, 
+            historicoVoltas: [...historicoAtual, tempoDestaVolta] 
+          };
+        }
+        return p;
+      });
+
+      if (idDonoDaMelhorVolta) setIdPilotoMelhorVolta(idDonoDaMelhorVolta);
+      if (novaMelhorVoltaMundial) setTempoMelhorVoltaMs(novaMelhorVoltaMundial);
+
+      return updatedSort(listaGridAtualizado);
+    });
+
+    // Envia ao banco a passagem registrada
+    fetch('/api/cronometragem', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        transponder: pilotoDono.transponder || `ANTENA-${pilotoDono.numeral}`,
+        numeral: pilotoDono.numeral,
+        bateriaId: bateriaId,
+        ipAntena: "Zebra FX7400 Log Reader"
+      })
+    }).catch(err => console.error("Erro ao registrar passagem via tag no BD:", err));
   };
 
   const registrarPassagemPiloto = async (numeralMoto: string) => {
@@ -284,66 +425,10 @@ function ConteudoCronometragem() {
       return;
     }
 
-    setPilotos(pilotosAtuais => {
-      let novaMelhorVoltaMundial = tempoMelhorVoltaMs;
-      let idDonoDaMelhorVolta = idPilotoMelhorVolta;
-
-      const listaGridAtualizado = pilotosAtuais.map(p => {
-        if (String(p.numeral) === motoLimpa) {
-          const voltasAtuais = (p.voltas || 0) + 1;
-          const momentoAnterior = p.ultimaPassagemMs || 0;
-          const tempoDestaVolta = tempoDecorridoMs - momentoAnterior;
-
-          const menorVoltaAnterior = p.melhorVoltaMs || 0;
-          const novaMelhorVoltaPiloto = (menorVoltaAnterior === 0 || tempoDestaVolta < menorVoltaAnterior) 
-            ? tempoDestaVolta 
-            : menorVoltaAnterior;
-
-          if (novaMelhorVoltaMundial === null || tempoDestaVolta < novaMelhorVoltaMundial) {
-            novaMelhorVoltaMundial = tempoDestaVolta;
-            idDonoDaMelhorVolta = p._id;
-          }
-
-          const historicoAtual = p.historicoVoltas || [];
-
-          return {
-            ...p,
-            voltas: voltasAtuais,
-            tempoTotalMs: tempoDecorridoMs,
-            melhorVoltaMs: novaMelhorVoltaPiloto,
-            ultimaPassagemMs: tempoDecorridoMs,
-            ultimaVoltaMs: tempoDestaVolta, 
-            historicoVoltas: [...historicoAtual, tempoDestaVolta] 
-          };
-        }
-        return p;
-      });
-
-      if (idDonoDaMelhorVolta) setIdPilotoMelhorVolta(idDonoDaMelhorVolta);
-      if (novaMelhorVoltaMundial) setTempoMelhorVoltaMs(novaMelhorVoltaMundial);
-
-      return updatedSort(listaGridAtualizado);
-    });
-
-    try {
-      await fetch('/api/cronometragem', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          transponder: pilotoDono.transponder || `MANUAL-${pilotoDono.numeral}`,
-          numeral: pilotoDono.numeral,
-          bateriaId: bateriaId,
-          ipAntena: "127.0.0.1 (Painel Manual)"
-        })
-      });
-    } catch (err) {
-      console.error("Erro ao computar passagem no servidor:", err);
-    }
-
+    processarPassagemAutomatica(motoLimpa);
     setNumeroMotoInput('');
   };
 
-  // 🔥 OPERAÇÃO: FINALIZAR PROVA E ABRIR EM NOVA ABA SENSÍVEL AO HISTÓRICO VOLTA A VOLTA
   const finalizarProvaERegistrar = async () => {
     if (!eventoId || !bateriaId) {
       alert("Dados da prova incompletos para finalização.");
@@ -356,11 +441,8 @@ function ConteudoCronometragem() {
 
     try {
       setSalvando(true);
-      
-      // 1. Pausamos o cronômetro local para congelar o layout de comparação visual
       setCorridaAtiva(false); 
 
-      // 2. Mudamos o status da bateria no banco para Finalizada
       await fetch(`/api/bateria/${bateriaId}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -370,7 +452,6 @@ function ConteudoCronometragem() {
       const batteryObj = todasBaterias.find(b => String(b._id) === String(bateriaId));
       const nomeBateriaFinal = batteryObj?.nome || "BATERIA FINALIZADA";
 
-      // Mapeia o grid garantindo a integridade do array estrutural do volta a volta
       const gridFinalMapeado = pilotos.map((p, index) => {
         const pontosGanhos = index === 0 ? 25 : index === 1 ? 22 : index === 2 ? 20 : index === 3 ? 18 : 15;
         
@@ -391,7 +472,6 @@ function ConteudoCronometragem() {
           tempoTotalMs: p.tempoTotalMs || 0,
           melhorVoltaMs: p.melhorVoltaMs || 0,
           pontosGanhos: p.voltas && p.voltas > 0 ? pontosGanhos : 0,
-          // 🏁 Importante: Envia o histórico completo de milissegundos para o relatório renderizar o detalhado
           historicoVoltas: p.historicoVoltas || [] 
         };
       });
@@ -416,7 +496,6 @@ function ConteudoCronometragem() {
         throw new Error(dadosRetorno.error || "Erro desconhecido ao registrar corrida.");
       }
 
-      // ✨ CORREÇÃO PRINCIPAL: Abre em uma nova aba (_blank) mantendo a tela atual congelada intacta
       const urlRetorno = origem ? `&origem=${encodeURIComponent(origem)}` : '';
       const urlRelatorio = `/admin/relatorios/${dadosRetorno.resultadoId}?novaAba=true${urlRetorno}`;
       
@@ -602,8 +681,8 @@ function ConteudoCronometragem() {
         <div className="flex justify-between items-center text-[10px] font-mono font-bold text-zinc-600 tracking-wider uppercase shrink-0 px-1">
           <span>SISTEMA DE CRONOMETRAGEM SC</span>
           <span className={`${corridaAtiva ? 'text-emerald-500' : 'text-amber-500'} flex items-center gap-1.5`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${corridaAtiva ? 'bg-emerald-500 animate-pulse' : 'bg-amber-500'}`}></span>
-            • {corridaAtiva ? 'MODO ONLINE SINCRONIZADO' : 'PROVA PAUSADA'}
+            <Radio size={12} className={corridaAtiva ? 'animate-pulse text-emerald-500' : 'text-amber-500'} />
+            • {corridaAtiva ? 'MODO ONLINE (RECEPTOR RFID ATIVO)' : 'PROVA PAUSADA'}
           </span>
         </div>
       </main>
