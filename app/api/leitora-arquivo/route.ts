@@ -1,109 +1,55 @@
+// app/api/leitora-arquivo/route.ts
 import { NextRequest, NextResponse } from 'next/server';
-import fs from 'fs';
-import path from 'path';
+import { zebraManager, TagData } from '@/app/lib/zebraReader';
 
-export const dynamic = 'force-dynamic';
-export const revalidate = 0;
+let bufferTagsRecentes: { tag: string; tagCompleta: string; timestampMs: number }[] = [];
+const MAX_BUFFER_SIZE = 1000; // Limite de segurança contra estouro de memória
 
-let ultimaPosicaoLida = 0;
-let caminhoAtual = '';
+if (!(global as any).hasZebraListener) {
+  zebraManager.on('tag', (tagData: TagData) => {
+    // Evita estourar a memória do Node se ninguém consumir a API
+    if (bufferTagsRecentes.length >= MAX_BUFFER_SIZE) {
+      bufferTagsRecentes.shift(); // Remove a leitura mais antiga
+    }
 
-// Função para separar a tag do horário e extrair o número exato
-function processarLinhaTag(linhaBruta: string) {
-  const regexHorario = /(\d{2}:\d{2}:\d{2}\.\d+)/;
-  const matchHorario = linhaBruta.match(regexHorario);
-  
-  const horarioTexto = matchHorario ? matchHorario[1] : null;
-  const tagApenas = linhaBruta.replace(regexHorario, '').trim();
-
-  // Converte o horário do log (HH:mm:ss.SSS) para timestamp em milissegundos do dia atual
-  let timestampLeituraMs = Date.now();
-
-  if (horarioTexto) {
-    const [horas, minutos, segundosComMilis] = horarioTexto.split(':');
-    const [segundos, milis] = segundosComMilis.split('.');
-
-    const agora = new Date();
-    agora.setHours(parseInt(horas, 10), parseInt(minutos, 10), parseInt(segundos, 10), parseInt(milis, 10));
-    timestampLeituraMs = agora.getTime();
-  }
-
-  // Extração da tag
-  const matchNumero = tagApenas.match(/1111000(\d+?)0*$/);
-  let numeroFormatado = tagApenas;
-
-  if (matchNumero) {
-    numeroFormatado = parseInt(matchNumero[1], 10).toString();
-  } else {
-    const matchGenerico = tagApenas.match(/([1-9]\d*?)0*$/);
-    if (matchGenerico) numeroFormatado = matchGenerico[1];
-  }
-
-  return {
-    tagCompleta: tagApenas,
-    tag: numeroFormatado,
-    timestampMs: timestampLeituraMs // 👈 Timestamp real de quando a foto/antena registrou!
-  };
+    bufferTagsRecentes.push({
+      tag: tagData.epc,
+      tagCompleta: tagData.epc,
+      timestampMs: Date.now()
+    });
+  });
+  (global as any).hasZebraListener = true;
 }
 
-export async function GET(request: NextRequest) {
+export async function GET(req: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const caminho = searchParams.get('caminho');
+    const { searchParams } = new URL(req.url);
+    const acao = searchParams.get('acao');
 
-    if (!caminho) {
-      return NextResponse.json({ error: 'Caminho do arquivo não informado.' }, { status: 400 });
+    if (acao === 'start') {
+      // Executa sem travar o Response da API
+      zebraManager.startReading().catch(console.error);
+      return NextResponse.json({ status: 'Comando de leitura enviado para a Zebra' });
     }
 
-    const caminhoAbsoluto = path.normalize(caminho);
-
-    if (!fs.existsSync(caminhoAbsoluto)) {
-      return NextResponse.json({ 
-        error: `Arquivo não encontrado no caminho: ${caminhoAbsoluto}` 
-      }, { status: 404 });
+    if (acao === 'stop') {
+      await zebraManager.stopReading();
+      return NextResponse.json({ status: 'Leitura parada' });
     }
 
-    if (caminhoAtual !== caminhoAbsoluto) {
-      caminhoAtual = caminhoAbsoluto;
-      ultimaPosicaoLida = 0;
+    if (acao === 'clearHistory') {
+      zebraManager.clearHistory();
+      return NextResponse.json({ status: 'Histórico de cooldown zerado' });
     }
 
-    const stats = fs.statSync(caminhoAbsoluto);
-    const tamanhoArquivo = stats.size;
+    // Retorna e drena a fila acumulada
+    const tagsParaEnviar = [...bufferTagsRecentes];
+    bufferTagsRecentes = []; 
 
-    if (tamanhoArquivo < ultimaPosicaoLida) {
-      ultimaPosicaoLida = 0;
-    }
-
-    if (tamanhoArquivo === ultimaPosicaoLida) {
-      return NextResponse.json({ tagsRecentes: [], totalLido: 0 });
-    }
-
-    const stream = fs.createReadStream(caminhoAbsoluto, {
-      start: ultimaPosicaoLida,
-      end: tamanhoArquivo,
-      encoding: 'utf-8'
-    });
-
-    let novosDados = '';
-    for await (const chunk of stream) {
-      novosDados += chunk;
-    }
-
-    ultimaPosicaoLida = tamanhoArquivo;
-
-    const linhas = novosDados.split(/\r?\n/).filter((linha) => linha.trim() !== '');
-
-    // Processa cada linha separando a tag do timestamp e limpando o número
-    const tagsRecentes = linhas.map((linha) => processarLinhaTag(linha));
-
-    return NextResponse.json({
-      tagsRecentes,
-      totalLido: linhas.length
-    });
+    return NextResponse.json({ tagsRecentes: tagsParaEnviar });
 
   } catch (error: any) {
-    console.error('Erro ao ler arquivo de log:', error);
-    return NextResponse.json({ error: 'Falha ao ler arquivo local.', details: error.message }, { status: 500 });
+    console.error("Erro na API da leitora Zebra LLRP:", error);
+    return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
@@ -20,6 +19,7 @@
     "dotenv": "^17.4.2",
     "js-cookie": "^3.0.5",
     "jsonwebtoken": "^9.0.3",
+    "llrpjs": "github:llrpjs/llrpjs",
     "lucide-react": "^1.14.0",
     "mongodb": "^6.21.0",
     "mongoose": "^9.6.1",
