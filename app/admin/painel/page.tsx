@@ -73,23 +73,17 @@ const formatarDataHoraSegura = (timestampRaw: string | number) => {
 export default function PainelAdmin() {
   const router = useRouter();
 
-  // --- CONTROLE DE ACESSO VIA LOGIN / BANCO ---
-  // Exemplo com NextAuth:
-  // const { data: session } = useSession();
-  // const tipoUsuario: TipoUsuario = (session?.user as any)?.role || 'Secretaria';
-
-  // Exemplo carregando do banco via fetch no /api/auth/me:
   const [usuarioLogado, setUsuarioLogado] = useState<{ nome: string; role: TipoUsuario } | null>(null);
 
   useEffect(() => {
     async function obterUsuarioAutenticado() {
       try {
-        const res = await fetch('/api/auth/me'); // Ajuste conforme a rota do seu backend
+        const res = await fetch('/api/auth/me');
         if (res.ok) {
           const data = await res.json();
           setUsuarioLogado({
             nome: data.nome || 'Usuário',
-            role: data.role || 'Secretaria' // Valor padrão caso não venha preenchido
+            role: data.role || 'Secretaria'
           });
         }
       } catch (err) {
@@ -99,7 +93,7 @@ export default function PainelAdmin() {
     obterUsuarioAutenticado();
   }, []);
 
-  const tipoUsuario = usuarioLogado?.role || 'Administrador'; // Fallback enquanto carrega
+  const tipoUsuario = usuarioLogado?.role || 'Administrador';
 
   // Estados de Navegação
   const [activeTab, setActiveTab] = useState<'dashboard' | 'cadastro_eventos' | 'pilotos' | 'relatorios' | 'configuracoes' | 'usuarios'>('dashboard');
@@ -122,7 +116,10 @@ export default function PainelAdmin() {
   const [modalidades, setModalidades] = useState<{ _id: string; nome: string }[]>([]);
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [baterias, setBaterias] = useState<Bateria[]>([]);
-  const [pilotos, setPilotos] = useState<Piloto[]>([]);
+  
+  // Listas de Pilotos Separação (Pilotos do Evento vs Todos os Pilotos)
+  const [pilotosEtapa, setPilotosEtapa] = useState<Piloto[]>([]);
+  const [todosPilotos, setTodosPilotos] = useState<Piloto[]>([]);
 
   // RFID SSE
   const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
@@ -195,6 +192,25 @@ export default function PainelAdmin() {
     }
   };
 
+  const carregarTodosPilotos = async () => {
+    try {
+      const res = await fetch('/api/piloto');
+      if (res.ok) {
+        const dados = await res.json();
+        setTodosPilotos(dados || []);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar todos os pilotos:", err);
+    }
+  };
+
+  const alternarAba = (aba: typeof activeTab) => {
+    setActiveTab(aba);
+    if (aba === 'pilotos') {
+      carregarTodosPilotos();
+    }
+  };
+
   useEffect(() => {
     if (!isReading) return;
     const eventSource = new EventSource('/api/reader/stream');
@@ -253,7 +269,7 @@ export default function PainelAdmin() {
       ]);
       if (resCat.ok) setCategorias(await resCat.json());
       if (resBat.ok) setBaterias(await resBat.json());
-      if (resPil.ok) setPilotos(await resPil.json());
+      if (resPil.ok) setPilotosEtapa(await resPil.json());
     } catch (err) {
       console.error(err);
     }
@@ -357,7 +373,12 @@ export default function PainelAdmin() {
 
       if (res.ok) {
         limparFormularioPiloto();
-        await entrarNoEvento(eventoAtivo);
+        if (eventoAtivo) {
+          await entrarNoEvento(eventoAtivo);
+        }
+        if (activeTab === 'pilotos') {
+          await carregarTodosPilotos();
+        }
       }
     } catch (err) { console.error(err); }
     setLoadingPiloto(false);
@@ -394,13 +415,16 @@ export default function PainelAdmin() {
 
   const tagList = Array.from(tags.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
 
-  // Regras de Visualização conforme o Tipo de Usuário vindo da Autenticação
+  // Regras de Visualização conforme o Tipo de Usuário
   const podeAcessarCadastroEventos = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
   const podeAcessarPilotos = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
   const podeAcessarConfiguracoes = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
   const podeAcessarUsuarios = tipoUsuario === 'Administrador';
 
-  const pilotosFiltrados = pilotos.filter(p => 
+  // Lista dinamicamente alternada: Se na aba geral 'pilotos' usa todosPilotos, senão usa pilotosEtapa
+  const listaExibicaoPilotos = activeTab === 'pilotos' ? todosPilotos : pilotosEtapa;
+
+  const pilotosFiltrados = listaExibicaoPilotos.filter(p => 
     p.nome.toLowerCase().includes(buscaPiloto.toLowerCase()) || 
     p.numeral.includes(buscaPiloto) ||
     p.transponder?.toLowerCase().includes(buscaPiloto.toLowerCase())
@@ -421,7 +445,7 @@ export default function PainelAdmin() {
 
         <nav className="flex-1 p-4 space-y-1 text-xs font-medium text-zinc-400">
           <button 
-            onClick={() => setActiveTab('dashboard')} 
+            onClick={() => alternarAba('dashboard')} 
             className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'dashboard' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
           >
             <BarChart3 size={16} className={activeTab === 'dashboard' ? 'text-red-500' : 'text-zinc-500'} /> Painel Principal
@@ -429,7 +453,7 @@ export default function PainelAdmin() {
           
           {podeAcessarCadastroEventos && (
             <button 
-              onClick={() => setActiveTab('cadastro_eventos')} 
+              onClick={() => alternarAba('cadastro_eventos')} 
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'cadastro_eventos' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
             >
               <PlusCircle size={16} className={activeTab === 'cadastro_eventos' ? 'text-red-500' : 'text-zinc-500'} /> Cadastro de Eventos
@@ -438,7 +462,7 @@ export default function PainelAdmin() {
 
           {podeAcessarPilotos && (
             <button 
-              onClick={() => setActiveTab('pilotos')} 
+              onClick={() => alternarAba('pilotos')} 
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'pilotos' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
             >
               <Users size={16} className={activeTab === 'pilotos' ? 'text-red-500' : 'text-zinc-500'} /> Pilotos Cadastrados
@@ -454,7 +478,7 @@ export default function PainelAdmin() {
 
           {podeAcessarConfiguracoes && (
             <button 
-              onClick={() => setActiveTab('configuracoes')} 
+              onClick={() => alternarAba('configuracoes')} 
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'configuracoes' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
             >
               <Settings size={16} className={activeTab === 'configuracoes' ? 'text-red-500' : 'text-zinc-500'} /> Configurações
@@ -463,7 +487,7 @@ export default function PainelAdmin() {
 
           {podeAcessarUsuarios && (
             <button 
-              onClick={() => setActiveTab('usuarios')} 
+              onClick={() => alternarAba('usuarios')} 
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'usuarios' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
             >
               <ShieldCheck size={16} className={activeTab === 'usuarios' ? 'text-red-500' : 'text-zinc-500'} /> Usuários
@@ -578,7 +602,7 @@ export default function PainelAdmin() {
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 font-black text-xs uppercase text-white rounded-lg shadow-lg shadow-red-600/20 transition-all font-mono"
                   >
-                    <UserPlus size={16} /> Inscrever Pilotos ({pilotos.length})
+                    <UserPlus size={16} /> Inscrever Pilotos ({pilotosEtapa.length})
                   </button>
                 </div>
 
@@ -695,8 +719,8 @@ export default function PainelAdmin() {
           <div className="space-y-6 max-w-7xl mx-auto">
             <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
               <div>
-                <h1 className="text-2xl font-black uppercase text-white">Pilotos Cadastrados</h1>
-                <p className="text-xs text-zinc-500 font-mono">Visualização geral dos pilotos e suas respectivas categorias no evento.</p>
+                <h1 className="text-2xl font-black uppercase text-white">Pilotos Cadastrados (Geral)</h1>
+                <p className="text-xs text-zinc-500 font-mono">Listagem completa de todos os pilotos registrados na base de dados.</p>
               </div>
 
               <div className="flex items-center gap-2 w-full md:w-auto">
@@ -718,7 +742,7 @@ export default function PainelAdmin() {
                     }}
                     className="px-3 py-2 bg-red-600 hover:bg-red-700 font-black text-xs uppercase text-white rounded-lg flex items-center gap-1 font-mono shrink-0"
                   >
-                    <UserPlus size={14} /> Novo Piloto
+                    <UserPlus size={14} /> Novo Piloto na Etapa
                   </button>
                 )}
               </div>
@@ -735,7 +759,7 @@ export default function PainelAdmin() {
               <div className="divide-y divide-zinc-900/60">
                 {pilotosFiltrados.length === 0 ? (
                   <div className="p-12 text-center text-zinc-600 font-mono text-xs italic">
-                    {eventoAtivo ? "Nenhum piloto localizado com o termo pesquisado." : "Selecione ou abra um evento em 'Cadastro de Eventos' para visualizar os pilotos inscritos."}
+                    Nenhum piloto localizado com o termo pesquisado.
                   </div>
                 ) : (
                   pilotosFiltrados.map(p => (
@@ -874,7 +898,7 @@ export default function PainelAdmin() {
                     <h2 className="text-sm font-black uppercase text-white">
                       {pilotoEmEdicao ? `Editando Piloto: ${pilotoEmEdicao.nome}` : 'Inscrição de Competidores'}
                     </h2>
-                    <p className="text-[11px] text-zinc-500 font-mono">Etapa: <span className="text-red-500 font-bold uppercase">{eventoAtivo?.nome}</span></p>
+                    <p className="text-[11px] text-zinc-500 font-mono">Etapa: <span className="text-red-500 font-bold uppercase">{eventoAtivo?.nome || 'Geral'}</span></p>
                   </div>
                 </div>
                 <button 
@@ -953,13 +977,13 @@ export default function PainelAdmin() {
                 <div className="md:col-span-2 bg-[#08080a] border border-zinc-900 rounded-xl overflow-hidden flex flex-col h-[380px]">
                   <div className="p-3 border-b border-zinc-900 bg-black/40 text-xs font-mono font-bold text-zinc-400 uppercase flex justify-between items-center">
                     <span>Pilotos Confirmados na Etapa</span>
-                    <span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded text-red-500">{pilotos.length} inscritos</span>
+                    <span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded text-red-500">{pilotosEtapa.length} inscritos</span>
                   </div>
                   <div className="divide-y divide-zinc-900/60 overflow-y-auto flex-1">
-                    {pilotos.length === 0 ? (
+                    {pilotosEtapa.length === 0 ? (
                       <div className="p-12 text-center text-zinc-600 font-mono text-xs italic">Nenhum piloto inscrito nesta etapa até o momento.</div>
                     ) : (
-                      pilotos.map(p => (
+                      pilotosEtapa.map(p => (
                         <div key={p._id} className={`p-3 font-mono text-xs flex justify-between items-center hover:bg-zinc-900/30 transition-colors ${pilotoEmEdicao?._id === p._id ? 'bg-amber-950/10 border-l-2 border-amber-500' : ''}`}>
                           <div>
                             <p className="text-white font-black uppercase text-sm">{p.nome}</p>

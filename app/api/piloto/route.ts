@@ -14,15 +14,16 @@ export async function GET(request: Request) {
     const filtro: any = {};
     if (eventoId) filtro.eventoId = eventoId;
     
-    // Corrigido para verificar dentro do array 'categoriasIds'
+    // Filtra dentro do array 'categoriasIds' se for fornecido
     if (categoriaId) filtro.categoriasIds = categoriaId; 
 
-    if (!eventoId && !categoriaId) {
-      return NextResponse.json({ error: 'Informe ao menos um filtro (evento ou categoria).' }, { status: 400 });
-    }
+    // REMOVIDO: A trava que exigia eventoId ou categoriaId.
+    // Se nenhum filtro for passado, 'filtro' será {} e o MongoDB retornará TODOS os pilotos.
 
-    // Mantemos o populate para a tabela da listagem exibir os nomes perfeitamente
-    const pilotos = await Piloto.find(filtro).sort({ nome: 1 }).populate('categoriasIds', 'nome'); 
+    const pilotos = await Piloto.find(filtro)
+      .sort({ nome: 1 })
+      .populate('categoriasIds', 'nome'); 
+
     return NextResponse.json(pilotos, { status: 200 });
   } catch (error: any) {
     console.error('Erro ao buscar pilotos:', error);

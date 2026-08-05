@@ -3,14 +3,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
   FileText, Calendar, MapPin, ChevronRight, Loader2,
-  BarChart3, Flag, Users, Settings, FlagTriangleRight, X, Layers, Globe
+  BarChart3, Flag, Users, Settings, FlagTriangleRight, X, Layers, Globe, PlusCircle, ShieldCheck
 } from 'lucide-react';
 
 interface Bateria {
   _id: string;
   nome: string;
   status: 'agendada' | 'finalizada' | 'Na_Pista';
-  resultadoId?: string; // ID da tabela resultados_corridas
+  resultadoId?: string;
 }
 
 interface Evento {
@@ -31,95 +31,95 @@ interface LeitoraConfig {
   status: 'conectado' | 'desconectado' | 'iniciada' | 'tentando';
 }
 
+type TipoUsuario = 'Administrador' | 'Cronometrista' | 'Secretaria';
+
 export default function CentralRelatoriosAdmin() {
   const router = useRouter();
   const [eventos, setEventos] = useState<Evento[]>([]);
   const [bateriasPorEvento, setBateriasPorEvento] = useState<{ [key: string]: Bateria[] }>({});
   const [loading, setLoading] = useState(true);
   const [eventoAberto, setEventoAberto] = useState<string | null>(null);
-  // Controle de Abas principais do Menu Lateral
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'pilotos' | 'relatorios' | 'configuracoes'>('relatorios');
-  // Estado para armazenar os últimos chips lidos para teste na tela de engenharia
-  const [ultimasTagsLidas, setUltimasTagsLidas] = useState<{ tag: string; dataHora: string; antena: string }[]>([]);
   
+  // Controle de Abas / Navegação
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'cadastro_eventos' | 'pilotos' | 'relatorios' | 'configuracoes' | 'usuarios'>('relatorios');
+  
+  // Dados do usuário logado
+  const [usuarioLogado, setUsuarioLogado] = useState<{ nome: string; role: TipoUsuario } | null>(null);
+
   // Estados para o Modal de Seleção de Formato de Impressão
   const [modalAberto, setModalAberto] = useState(false);
   const [bateriaSelecionada, setBateriaSelecionada] = useState<Bateria | null>(null);
 
-  // Estados de Hardware (RFID Redundância)
-    const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
+  // Estados de Hardware
+  const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
 
-
-    // Referência para manter as leitoras sempre atualizadas sem disparar efeitos
-      const leitorasRef = useRef(leitoras);
-      useEffect(() => {
-        leitorasRef.current = leitoras;
-      }, [leitoras]);
-
-  // Efeito para monitorar status e acumular tags em tempo real
-    useEffect(() => {
-      if (leitorasRef.current.length === 0) return;
-  
-      const checarStatusEHardware = async () => {
-        let todasAsTagsDessaRodada: { tag: string; dataHora: string; antena: string }[] = [];
-        
-        const updatedLeitoras = await Promise.all(
-          leitorasRef.current.map(async (leitora) => {
-            if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
-  
-            try {
-              const res = await fetch('/api/leitora', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action: 'STATUS', id: leitora._id, ip: leitora.ip })
-              });
-              
-              if (res.ok) {
-                const dados = await res.json();
-                
-                if (dados.tagsRecentes && dados.tagsRecentes.length > 0) {
-                  const tagsComNomeOrigem = dados.tagsRecentes.map((t: any) => ({
-                    ...t,
-                    antena: leitora.nome 
-                  }));
-                  todasAsTagsDessaRodada = [...todasAsTagsDessaRodada, ...tagsComNomeOrigem];
-                }
-  
-                return { ...leitora, status: dados.status, ativa: dados.status === 'conectado' };
-              }
-            } catch (err) {
-              console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
-            }
-            return leitora;
-          })
-        );
-  
-        setLeitoras(updatedLeitoras);
-  
-        if (todasAsTagsDessaRodada.length > 0) {
-          setUltimasTagsLidas((prevAcumulado) => {
-            const listaMesclada = [...todasAsTagsDessaRodada, ...prevAcumulado];
-            
-            const idsUnicos = new Set();
-            const listaFiltrada = listaMesclada.filter((item) => {
-              const chaveUnica = `${item.tag}-${item.dataHora}`;
-              if (idsUnicos.has(chaveUnica)) return false;
-              idsUnicos.add(chaveUnica);
-              return true;
-            });
-  
-            return listaFiltrada
-              .sort((a, b) => b.dataHora.localeCompare(a.dataHora))
-              .slice(0, 20);
+  // Carregar usuário logado
+  useEffect(() => {
+    async function obterUsuarioAutenticado() {
+      try {
+        const res = await fetch('/api/auth/me');
+        if (res.ok) {
+          const data = await res.json();
+          setUsuarioLogado({
+            nome: data.nome || 'Usuário',
+            role: data.role || 'Secretaria'
           });
         }
-      };
-  
-      checarStatusEHardware();
-      const intervalo = setInterval(checarStatusEHardware, 5000);
-  
-      return () => clearInterval(intervalo);
-    }, []);
+      } catch (err) {
+        console.error("Erro ao obter dados do usuário logado:", err);
+      }
+    }
+    obterUsuarioAutenticado();
+  }, []);
+
+  const tipoUsuario = usuarioLogado?.role || 'Administrador';
+
+  // Permissões
+  const podeAcessarCadastroEventos = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
+  const podeAcessarPilotos = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
+  const podeAcessarConfiguracoes = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
+  const podeAcessarUsuarios = tipoUsuario === 'Administrador';
+
+  const leitorasRef = useRef(leitoras);
+  useEffect(() => {
+    leitorasRef.current = leitoras;
+  }, [leitoras]);
+
+  // Efeito para monitorar status das leitoras
+  useEffect(() => {
+    if (leitorasRef.current.length === 0) return;
+
+    const checarStatusEHardware = async () => {
+      const updatedLeitoras = await Promise.all(
+        leitorasRef.current.map(async (leitora) => {
+          if (leitora.status === 'desconectado' && !leitora.ativa) return leitora;
+
+          try {
+            const res = await fetch('/api/leitora', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'STATUS', id: leitora._id, ip: leitora.ip })
+            });
+            
+            if (res.ok) {
+              const dados = await res.json();
+              return { ...leitora, status: dados.status, ativa: dados.status === 'conectado' };
+            }
+          } catch (err) {
+            console.error(`Erro ao checar leitora ${leitora.nome}:`, err);
+          }
+          return leitora;
+        })
+      );
+
+      setLeitoras(updatedLeitoras);
+    };
+
+    checarStatusEHardware();
+    const intervalo = setInterval(checarStatusEHardware, 5000);
+
+    return () => clearInterval(intervalo);
+  }, []);
 
   useEffect(() => {
     async function carregarDados() {
@@ -168,120 +168,126 @@ export default function CentralRelatoriosAdmin() {
     carregarDados();
   }, []);
 
-  // Abre as opções ao clicar na bateria
   const lidarCliqueBateria = (bateria: Bateria) => {
     setBateriaSelecionada(bateria);
     setModalAberto(true);
   };
 
-  // Redireciona aplicando a Query String correta para a página de visualização tratar
   const redirecionarParaRelatorio = (tipo: 'geral' | 'categoria') => {
     if (!bateriaSelecionada || !bateriaSelecionada.resultadoId) return;
-    
     router.push(`/admin/relatorios/${bateriaSelecionada.resultadoId}?tipo=${tipo}&origem=/admin/relatorios`);
     setModalAberto(false);
     setBateriaSelecionada(null);
   };
 
-  //ir para o painel principal
   const irParaPainelPrincipal = () => {
     router.push('/admin/painel');
   };
 
-  const handleToggleLeitoraHardware = async (leitora: LeitoraConfig) => {
-    const novaAcao = leitora.status === 'conectado' ? 'STOP' : 'START';
-    
-    setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: novaAcao === 'START' ? 'iniciada' : 'desconectado' } : l));
-
-    try {
-      const res = await fetch('/api/leitora', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: novaAcao,
-          id: leitora._id,
-          ip: leitora.ip,
-          porta: leitora.porta,
-          modo: leitora.modo
-        })
-      });
-
-      if (res.ok) {
-        const dados = await res.json();
-        
-        setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: dados.status, ativa: dados.status === 'conectado' } : l));
-      } else {
-        setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: 'desconectado', ativa: false } : l));
-      }
-    } catch (error) {
-      console.error(error);
-      setLeitoras(prev => prev.map(l => l.ip === leitora.ip ? { ...l, status: 'desconectado', ativa: false } : l));
-    }
-  };
-
   return (
-    <div className="min-h-screen w-screen bg-[#050505] text-zinc-100 font-sans antialiased flex p-0 overflow-x-hidden select-none">
+    <div className="flex h-screen bg-[#070708] text-zinc-100 font-sans overflow-hidden select-none">
       
-     {/* MENU LATERAL */}
-           <aside className="w-64 bg-[#0c0c0e] border-r border-zinc-900 flex flex-col shrink-0 print:hidden">
-             <div className="p-6 border-b border-zinc-900 flex items-center gap-3">
-               <img src="/FPMX-logo.png" alt="Logo Cronoka" className="w-12 h-12 object-contain" />     
-               <div>
-                 <h2 className="text-xs font-black tracking-wider uppercase text-white">CRONOKA</h2>
-                 <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-widest">Painel de controle</p>
-               </div>
-             </div>
-     
-             {/* STATUS DAS LEITORAS EM TEMPO REAL */}
-             {leitoras.length > 0 && (
-               <div className="px-6 py-3 bg-black/40 border-b border-zinc-900/60 space-y-1.5">
-                 <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-wider">📡 Hardware em Campo</p>
-                 <div className="space-y-1 max-h-[80px] overflow-y-auto custom-scrollbar">
-                   {leitoras.map(l => (
-                     <div key={l._id} className="flex items-center justify-between text-[10px] font-mono bg-zinc-950/40 px-2 py-1 rounded border border-zinc-900">
-                       <span className="text-zinc-400 truncate max-w-[120px] uppercase font-bold">{l.nome}</span>
-                       <div className="flex items-center gap-1.5">
-                         <span className={`w-1.5 h-1.5 rounded-full ${
-                           l.status === 'conectado' ? 'bg-emerald-500 animate-pulse' :
-                           l.status === 'tentando' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
-                         }`} />
-                         <span className={`text-[9px] font-black uppercase ${
-                           l.status === 'conectado' ? 'text-emerald-500' :
-                           l.status === 'tentando' ? 'text-amber-500' : 'text-red-500'
-                         }`}>
-                           {l.status === 'conectado' ? 'ONLINE' : l.status === 'tentando' ? 'CONECTANDO' : 'OFFLINE'}
-                         </span>
-                       </div>
-                     </div>
-                   ))}
-                 </div>
-               </div>
-             )}
-     
-             {/* NAVEGAÇÃO DO MENU */}
-             <nav className="flex-1 p-4 space-y-1 text-xs font-medium text-zinc-400">
-               <button 
-                 onClick={() => { irParaPainelPrincipal(); }} 
-                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'dashboard' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
-               >
-                 <BarChart3 size={16} className={activeTab === 'dashboard' ? 'text-red-500' : 'text-zinc-500'} /> Painel Principal
-               </button>
-               
-               <button 
-                 onClick={() => { setActiveTab('pilotos'); }} 
-                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'pilotos' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
-               >
-                 <Users size={16} className={activeTab === 'pilotos' ? 'text-red-500' : 'text-zinc-500'} /> Cadastro Pilotos
-               </button>
-               
-               <button  
-               onClick={()=>{setActiveTab('relatorios')}}
-                 className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-colors font-sans uppercase tracking-wide ${activeTab === 'relatorios' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
-               >
-                 <FileText size={16} className={activeTab === 'relatorios' ? 'text-red-500' : 'text-zinc-500'} /> Relatórios
-               </button>
-             </nav>
-           </aside>
+      {/* MENU LATERAL - ESTRUTURA IDÊNTICA AO PAINEL PRINCIPAL */}
+      <aside className="w-64 bg-[#0c0c0e] border-r border-zinc-900 flex flex-col shrink-0 print:hidden">
+        <div className="p-6 border-b border-zinc-900 flex items-center gap-3">
+          <img src="/FPMX-logo.png" alt="Logo Cronoka" className="w-12 h-12 object-contain" />     
+          <div>
+            <h2 className="text-xs font-black uppercase text-white">CRONOKA</h2>
+            <p className="text-[9px] font-mono text-zinc-500 font-bold uppercase">Painel de Controle</p>
+          </div>
+        </div>
+
+        {/* STATUS DAS LEITORAS (Se houver leitoras ativas) */}
+        {leitoras.length > 0 && (
+          <div className="px-6 py-3 bg-black/40 border-b border-zinc-900/60 space-y-1.5">
+            <p className="text-[9px] font-mono font-bold text-zinc-500 uppercase tracking-wider">📡 Hardware em Campo</p>
+            <div className="space-y-1 max-h-[80px] overflow-y-auto custom-scrollbar">
+              {leitoras.map(l => (
+                <div key={l._id} className="flex items-center justify-between text-[10px] font-mono bg-zinc-950/40 px-2 py-1 rounded border border-zinc-900">
+                  <span className="text-zinc-400 truncate max-w-[120px] uppercase font-bold">{l.nome}</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className={`w-1.5 h-1.5 rounded-full ${
+                      l.status === 'conectado' ? 'bg-emerald-500 animate-pulse' :
+                      l.status === 'tentando' ? 'bg-amber-500 animate-spin' : 'bg-red-500'
+                    }`} />
+                    <span className={`text-[9px] font-black uppercase ${
+                      l.status === 'conectado' ? 'text-emerald-500' :
+                      l.status === 'tentando' ? 'text-amber-500' : 'text-red-500'
+                    }`}>
+                      {l.status === 'conectado' ? 'ONLINE' : l.status === 'tentando' ? 'CONECTANDO' : 'OFFLINE'}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        <nav className="flex-1 p-4 space-y-1 text-xs font-medium text-zinc-400">
+          <button 
+            onClick={irParaPainelPrincipal} 
+            className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide hover:bg-zinc-900 hover:text-zinc-200"
+          >
+            <BarChart3 size={16} className="text-zinc-500" /> Painel Principal
+          </button>
+          
+          {podeAcessarCadastroEventos && (
+            <button 
+              onClick={irParaPainelPrincipal} 
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              <PlusCircle size={16} className="text-zinc-500" /> Cadastro de Eventos
+            </button>
+          )}
+
+          {podeAcessarPilotos && (
+            <button 
+              onClick={irParaPainelPrincipal} 
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              <Users size={16} className="text-zinc-500" /> Pilotos Cadastrados
+            </button>
+          )}
+
+          <button 
+            onClick={() => setActiveTab('relatorios')} 
+            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide ${activeTab === 'relatorios' ? 'bg-zinc-900 text-white font-bold border-l-2 border-red-600' : 'hover:bg-zinc-900 hover:text-zinc-200'}`}
+          >
+            <FileText size={16} className="text-red-500" /> Relatórios
+          </button>
+
+          {podeAcessarConfiguracoes && (
+            <button 
+              onClick={irParaPainelPrincipal} 
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              <Settings size={16} className="text-zinc-500" /> Configurações
+            </button>
+          )}
+
+          {podeAcessarUsuarios && (
+            <button 
+              onClick={irParaPainelPrincipal} 
+              className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg uppercase tracking-wide hover:bg-zinc-900 hover:text-zinc-200"
+            >
+              <ShieldCheck size={16} className="text-zinc-500" /> Usuários
+            </button>
+          )}
+        </nav>
+
+        {/* INFORMAÇÃO DO USUÁRIO LOGADO */}
+        <div className="p-4 border-t border-zinc-900 bg-black/40 text-[10px] font-mono flex items-center justify-between">
+          <div>
+            <p className="text-white font-bold truncate max-w-[120px]">
+              {usuarioLogado?.nome || 'Operador'}
+            </p>
+            <span className="text-red-500 font-bold uppercase block text-[9px]">
+              {tipoUsuario}
+            </span>
+          </div>
+          <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" title="Sessão Ativa" />
+        </div>
+      </aside>
 
       {/* CONTEÚDO PRINCIPAL */}
       <main className="flex-1 p-8 space-y-6 overflow-y-auto h-screen">
