@@ -92,6 +92,7 @@ export default function PainelAdmin() {
     }
     obterUsuarioAutenticado();
   }, []);
+  
 
   const tipoUsuario = usuarioLogado?.role || 'Administrador';
 
@@ -352,9 +353,81 @@ export default function PainelAdmin() {
     setPilotoEmEdicao(null);
   };
 
+ const vincularPilotoAoEvento = async (piloto: Piloto) => {
+  if (!eventoAtivo?._id) {
+    alert("Nenhum evento ativo selecionado.");
+    return;
+  }
+
+  // 1. Extrai APENAS as strings de IDs, descartando objetos populados
+  const extrairStringId = (item: any): string => {
+    if (!item) return '';
+    if (typeof item === 'string') return item;
+    if (typeof item === 'object' && item._id) return String(item._id);
+    return String(item);
+  };
+
+  const categoriasExistentes = (piloto.categoriasIds || [])
+    .map(extrairStringId)
+    .filter(Boolean);
+
+  let categoriasParaVincular: string[] = [];
+
+  if (catsPilotoSelecionadas.length > 0) {
+    categoriasParaVincular = catsPilotoSelecionadas.map(extrairStringId);
+  } else if (categoriasExistentes.length > 0) {
+    categoriasParaVincular = categoriasExistentes;
+  } else if (categorias.length > 0) {
+    categoriasParaVincular = categorias.map(c => extrairStringId(c._id));
+  }
+
+  // 2. Monta um payload limpo sem metadados
+  const payload = {
+    _id: piloto._id,
+    nome: piloto.nome,
+    numeral: piloto.numeral,
+    transponder: piloto.transponder || '',
+    categoriasIds: categoriasParaVincular,
+    eventoId: String(eventoAtivo._id)
+  };
+
+  setLoadingPiloto(true);
+
+  try {
+    // Teste enviando tanto query param quanto id no body para garantir compatibilidade com a rota
+    const res = await fetch(`/api/piloto?id=${piloto._id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    const resData = await res.json().catch(() => ({}));
+
+    if (res.ok) {
+      // Recarrega os dados atualizados do servidor
+      await entrarNoEvento(eventoAtivo);
+      await carregarTodosPilotos();
+      limparFormularioPiloto();
+    } else {
+      console.error("Erro retornado pela API:", resData);
+      alert(`Erro ${res.status}: ${resData.message || resData.error || 'Falha ao vincular no banco.'}`);
+    }
+  } catch (err) {
+    console.error("Erro na requisição de vínculo:", err);
+    alert("Falha de rede ao tentar vincular o piloto.");
+  } finally {
+    setLoadingPiloto(false);
+  }
+};
+
   const handleCriarOuAtualizarPiloto = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nomePiloto.trim() || !numeralPiloto.trim() || catsPilotoSelecionadas.length === 0 || !eventoAtivo) return;
+    if (!nomePiloto.trim() || !numeralPiloto.trim() || !eventoAtivo) return;
+
+    if (catsPilotoSelecionadas.length === 0) {
+      alert("Selecione pelo menos uma categoria.");
+      return;
+    }
 
     setLoadingPiloto(true);
     try {
@@ -429,6 +502,13 @@ export default function PainelAdmin() {
     p.numeral.includes(buscaPiloto) ||
     p.transponder?.toLowerCase().includes(buscaPiloto.toLowerCase())
   );
+
+  // Carrega a base geral de pilotos automaticamente ao abrir o modal
+  useEffect(() => {
+    if (modalPilotosAberto) {
+      carregarTodosPilotos();
+    }
+  }, [modalPilotosAberto]);
 
   return (
     <div className="flex h-screen bg-[#070708] text-zinc-100 font-sans overflow-hidden">
@@ -598,6 +678,7 @@ export default function PainelAdmin() {
                   <button 
                     onClick={() => {
                       limparFormularioPiloto();
+                      carregarTodosPilotos();
                       setModalPilotosAberto(true);
                     }}
                     className="flex items-center gap-2 px-4 py-2 bg-red-600 hover:bg-red-700 font-black text-xs uppercase text-white rounded-lg shadow-lg shadow-red-600/20 transition-all font-mono"
@@ -887,8 +968,9 @@ export default function PainelAdmin() {
         {/* MODAL DE INSCRIÇÃO E EDIÇÃO DE PILOTOS */}
         {modalPilotosAberto && (
           <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-            <div className="bg-[#0c0c0e] border border-zinc-900 w-full max-w-4xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="bg-[#0c0c0e] border border-zinc-900 w-full max-w-5xl rounded-2xl overflow-hidden shadow-2xl flex flex-col max-h-[90vh]">
               
+              {/* HEADER DO MODAL */}
               <div className="p-5 border-b border-zinc-900 flex justify-between items-center bg-black/40">
                 <div className="flex items-center gap-3">
                   <div className={`p-2 rounded-lg border ${pilotoEmEdicao ? 'bg-amber-950/40 border-amber-900/50 text-amber-500' : 'bg-red-950/40 border-red-900/50 text-red-500'}`}>
@@ -896,9 +978,11 @@ export default function PainelAdmin() {
                   </div>
                   <div>
                     <h2 className="text-sm font-black uppercase text-white">
-                      {pilotoEmEdicao ? `Editando Piloto: ${pilotoEmEdicao.nome}` : 'Inscrição de Competidores'}
+                      {pilotoEmEdicao ? `Editando Piloto: ${pilotoEmEdicao.nome}` : 'Gerenciador de Inscrições do Evento'}
                     </h2>
-                    <p className="text-[11px] text-zinc-500 font-mono">Etapa: <span className="text-red-500 font-bold uppercase">{eventoAtivo?.nome || 'Geral'}</span></p>
+                    <p className="text-[11px] text-zinc-500 font-mono">
+                      Etapa Atual: <span className="text-red-500 font-bold uppercase">{eventoAtivo?.nome || 'Não Selecionada'}</span>
+                    </p>
                   </div>
                 </div>
                 <button 
@@ -912,11 +996,14 @@ export default function PainelAdmin() {
                 </button>
               </div>
 
-              <div className="p-6 overflow-y-auto grid grid-cols-1 md:grid-cols-3 gap-6 items-start">
-                <div className="space-y-4">
+              {/* CORPO DO MODAL */}
+              <div className="p-6 overflow-y-auto grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                {/* COLUNA 1: FORMULÁRIO (NOVO OU EDIÇÃO DE EXISTENTE) */}
+                <div className="lg:col-span-5 bg-[#08080a] p-4 rounded-xl border border-zinc-900 space-y-4">
                   <div className="flex justify-between items-center">
-                    <h3 className="text-xs font-black uppercase text-zinc-300">
-                      {pilotoEmEdicao ? 'Alterar Dados' : 'Nova Ficha'}
+                    <h3 className="text-xs font-black uppercase text-zinc-300 flex items-center gap-2">
+                      {pilotoEmEdicao ? '✏️ Alterar Piloto' : '➕ Novo Cadastro Geral'}
                     </h3>
                     {pilotoEmEdicao && (
                       <button 
@@ -924,7 +1011,7 @@ export default function PainelAdmin() {
                         onClick={limparFormularioPiloto}
                         className="text-[10px] font-mono text-amber-500 hover:underline flex items-center gap-1 uppercase"
                       >
-                        <RotateCcw size={10} /> Cancelar
+                        <RotateCcw size={10} /> Novo Cadastro
                       </button>
                     )}
                   </div>
@@ -932,23 +1019,43 @@ export default function PainelAdmin() {
                   <form onSubmit={handleCriarOuAtualizarPiloto} className="space-y-3 font-mono text-xs">
                     <div>
                       <label className="text-[10px] text-zinc-500 font-bold uppercase">Nome do Piloto</label>
-                      <input type="text" placeholder="Nome Completo" value={nomePiloto} onChange={e => setNomePiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white uppercase outline-none mt-1" required />
+                      <input 
+                        type="text" 
+                        placeholder="Nome Completo" 
+                        value={nomePiloto} 
+                        onChange={e => setNomePiloto(e.target.value)} 
+                        className="w-full bg-black border border-zinc-800 rounded p-2 text-white uppercase outline-none mt-1 focus:border-red-600" 
+                        required 
+                      />
                     </div>
 
                     <div className="grid grid-cols-3 gap-2">
                       <div>
                         <label className="text-[10px] text-zinc-500 font-bold uppercase">Numeral</label>
-                        <input type="text" placeholder="# MOTO" value={numeralPiloto} onChange={e => setNumeralPiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white text-center font-black uppercase outline-none mt-1" required />
+                        <input 
+                          type="text" 
+                          placeholder="# MOTO" 
+                          value={numeralPiloto} 
+                          onChange={e => setNumeralPiloto(e.target.value)} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white text-center font-black uppercase outline-none mt-1 focus:border-red-600" 
+                          required 
+                        />
                       </div>
                       <div className="col-span-2">
                         <label className="text-[10px] text-zinc-500 font-bold uppercase">Transponder (EPC)</label>
-                        <input type="text" placeholder="EPC CHIP" value={transponderPiloto} onChange={e => setTransponderPiloto(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-cyan-400 font-bold uppercase outline-none mt-1" />
+                        <input 
+                          type="text" 
+                          placeholder="EPC CHIP" 
+                          value={transponderPiloto} 
+                          onChange={e => setTransponderPiloto(e.target.value)} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-cyan-400 font-bold uppercase outline-none mt-1 focus:border-red-600" 
+                        />
                       </div>
                     </div>
 
                     <div>
-                      <label className="text-[10px] text-zinc-500 font-bold uppercase mb-1 block">Categorias Inscritas</label>
-                      <div className="grid grid-cols-2 gap-1.5 max-h-[120px] overflow-y-auto p-1 bg-black rounded border border-zinc-900">
+                      <label className="text-[10px] text-zinc-500 font-bold uppercase mb-1 block">Categorias no Evento</label>
+                      <div className="grid grid-cols-2 gap-1.5 max-h-[110px] overflow-y-auto p-1 bg-black rounded border border-zinc-900">
                         {categorias.map(cat => (
                           <button
                             key={cat._id}
@@ -965,49 +1072,113 @@ export default function PainelAdmin() {
                     <button 
                       type="submit" 
                       disabled={loadingPiloto} 
-                      className={`w-full font-black py-2.5 rounded text-[11px] uppercase text-white shadow-lg ${
+                      className={`w-full font-black py-2.5 rounded text-[11px] uppercase text-white shadow-lg transition-all ${
                         pilotoEmEdicao ? 'bg-amber-600 hover:bg-amber-700 shadow-amber-600/10' : 'bg-red-600 hover:bg-red-700 shadow-red-600/10'
                       }`}
                     >
-                      {loadingPiloto ? "PROCESSANDO..." : pilotoEmEdicao ? "Salvar Alterações" : "Confirmar Inscrição"}
+                      {loadingPiloto ? "PROCESSANDO..." : pilotoEmEdicao ? "Salvar Alterações" : "Cadastrar e Inscrever"}
                     </button>
                   </form>
                 </div>
 
-                <div className="md:col-span-2 bg-[#08080a] border border-zinc-900 rounded-xl overflow-hidden flex flex-col h-[380px]">
-                  <div className="p-3 border-b border-zinc-900 bg-black/40 text-xs font-mono font-bold text-zinc-400 uppercase flex justify-between items-center">
-                    <span>Pilotos Confirmados na Etapa</span>
-                    <span className="text-[10px] bg-zinc-900 px-2 py-0.5 rounded text-red-500">{pilotosEtapa.length} inscritos</span>
-                  </div>
-                  <div className="divide-y divide-zinc-900/60 overflow-y-auto flex-1">
-                    {pilotosEtapa.length === 0 ? (
-                      <div className="p-12 text-center text-zinc-600 font-mono text-xs italic">Nenhum piloto inscrito nesta etapa até o momento.</div>
-                    ) : (
-                      pilotosEtapa.map(p => (
-                        <div key={p._id} className={`p-3 font-mono text-xs flex justify-between items-center hover:bg-zinc-900/30 transition-colors ${pilotoEmEdicao?._id === p._id ? 'bg-amber-950/10 border-l-2 border-amber-500' : ''}`}>
-                          <div>
-                            <p className="text-white font-black uppercase text-sm">{p.nome}</p>
-                            <p className="text-zinc-500 text-[11px]">
-                              #{p.numeral} — Chip: <span className="text-cyan-400 font-bold">{p.transponder || 'NÃO ATRIBUÍDO'}</span>
-                            </p>
-                            <p className="text-[10px] text-zinc-400 uppercase font-bold mt-0.5">
-                              Classes: <span className="text-red-500">{obterNomesCategorias(p.categoriasIds)}</span>
-                            </p>
-                          </div>
+                {/* COLUNA 2: BUSCA GLOBAL E SELEÇÃO DE PILOTOS JÁ CADASTRADOS */}
+                <div className="lg:col-span-7 space-y-4">
+                  <div className="bg-[#08080a] border border-zinc-900 rounded-xl overflow-hidden flex flex-col h-[400px]">
+                    <div className="p-3 border-b border-zinc-900 bg-black/40 flex justify-between items-center gap-2">
+                      <span className="text-xs font-mono font-bold text-zinc-400 uppercase">Base Geral de Pilotos</span>
+                      <div className="relative flex-1 max-w-xs">
+                        <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-500" />
+                        <input 
+                          type="text" 
+                          placeholder="Pesquisar para vincular..." 
+                          value={buscaPiloto}
+                          onChange={(e) => setBuscaPiloto(e.target.value)}
+                          className="w-full bg-black border border-zinc-800 rounded pl-8 pr-2 py-1 text-[11px] text-white outline-none font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="divide-y divide-zinc-900/60 overflow-y-auto flex-1">
+                      {(() => {
+                        // 1. Filtra pela busca
+                        const filtrados = todosPilotos.filter(p => 
+                          p.nome.toLowerCase().includes(buscaPiloto.toLowerCase()) || 
+                          p.numeral.includes(buscaPiloto)
+                        );
+
+                        // 2. Ordena: quem está no evento fica no TOPO
+                        const ordenados = [...filtrados].sort((a, b) => {
+                          const aNoEvento = a.eventoId === eventoAtivo?._id || pilotosEtapa.some(pe => pe._id === a._id);
+                          const bNoEvento = b.eventoId === eventoAtivo?._id || pilotosEtapa.some(pe => pe._id === b._id);
+
+                          if (aNoEvento && !bNoEvento) return -1; // 'a' sobe
+                          if (!aNoEvento && bNoEvento) return 1;  // 'b' sobe
+                          return a.nome.localeCompare(b.nome);     // desempata por ordem alfabética
+                        });
+
+                        if (ordenados.length === 0) {
+                          return (
+                            <div className="p-12 text-center text-zinc-600 font-mono text-xs italic">
+                              Nenhum piloto localizado na base geral.
+                            </div>
+                          );
+                        }
+
+                        return ordenados.map(p => {
+                          const estaNoEvento = p.eventoId === eventoAtivo?._id || pilotosEtapa.some(pe => pe._id === p._id);
                           
-                          <button
-                            type="button"
-                            onClick={() => iniciarEdicaoPiloto(p)}
-                            className="p-2 bg-zinc-900 hover:bg-amber-600/20 hover:text-amber-400 border border-zinc-800 text-zinc-400 rounded-lg transition-colors flex items-center gap-1 text-[10px] font-bold uppercase"
-                            title="Editar Piloto / Alterar Chip"
-                          >
-                            <Edit2 size={13} /> Editar
-                          </button>
-                        </div>
-                      ))
-                    )}
+                          return (
+                            <div 
+                              key={p._id} 
+                              className={`p-3 font-mono text-xs flex justify-between items-center transition-colors ${
+                                estaNoEvento ? 'bg-emerald-950/10 hover:bg-emerald-950/20' : 'hover:bg-zinc-900/30'
+                              }`}
+                            >
+                              <div>
+                                <div className="flex items-center gap-2">
+                                  <p className="text-white font-black uppercase text-xs">{p.nome}</p>
+                                  {estaNoEvento && (
+                                    <span className="text-[9px] bg-emerald-950 border border-emerald-800 text-emerald-400 px-1.5 py-0.5 rounded font-bold uppercase">
+                                      Inscrito
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-zinc-500 text-[10px]">
+                                  #{p.numeral} — Chip: <span className="text-cyan-400 font-bold">{p.transponder || 'SEM CHIP'}</span>
+                                </p>
+                              </div>
+
+                              <div className="flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => iniciarEdicaoPiloto(p)}
+                                  className="p-1.5 bg-zinc-900 hover:bg-amber-600/20 hover:text-amber-400 border border-zinc-800 text-zinc-400 rounded transition-colors text-[10px] font-bold uppercase"
+                                  title="Editar Dados"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+
+                                <button
+                                  type="button"
+                                  disabled={loadingPiloto || estaNoEvento}
+                                  onClick={() => vincularPilotoAoEvento(p)}
+                                  className={`px-2.5 py-1.5 rounded text-[10px] font-bold uppercase transition-colors ${
+                                    estaNoEvento 
+                                      ? 'bg-zinc-900/80 text-zinc-600 border border-zinc-800/50 cursor-default' 
+                                      : 'bg-red-600 hover:bg-red-700 text-white cursor-pointer'
+                                  }`}
+                                >
+                                  {estaNoEvento ? 'Já na Etapa' : 'Vincular ao Evento'}
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        });
+                      })()}
+                    </div>
                   </div>
                 </div>
+
               </div>
 
             </div>

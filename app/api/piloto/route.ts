@@ -64,42 +64,40 @@ export async function POST(request: Request) {
   }
 }
 
-// PUT: Atualizar um piloto existente
-export async function PUT(request: Request) {
+export async function PUT(req: Request) {
   try {
     await conectDB();
+    const { searchParams } = new URL(req.url);
+    const idQuery = searchParams.get('id');
+    const body = await req.json();
 
-    const { searchParams } = new URL(request.url);
-    const id = searchParams.get('id'); // Pega o ID passado na URL (?id=...)
+    const pilotoId = idQuery || body._id;
 
-    const body = await request.json();
-    const { nome, numeral, transponder, categoriasIds } = body;
-
-    if (!id) {
-      return NextResponse.json({ error: 'ID do piloto é obrigatório para edição.' }, { status: 400 });
+    if (!pilotoId) {
+      return NextResponse.json({ message: 'ID do piloto não fornecido' }, { status: 400 });
     }
 
+    // Atualiza garantindo retorno do documento novo
     const pilotoAtualizado = await Piloto.findByIdAndUpdate(
-      id,
+      pilotoId,
       {
-        nome: nome.trim().toUpperCase(),
-        numeral: numeral.trim(),
-        transponder: transponder ? transponder.trim().toUpperCase() : '',
-        categoriasIds // Salva o array puro de strings/IDs no banco
+        $set: {
+          nome: body.nome,
+          numeral: body.numeral,
+          transponder: body.transponder,
+          categoriasIds: body.categoriasIds,
+          eventoId: body.eventoId
+        }
       },
-      { new: true } // Retorna o documento já atualizado
+      { new: true, runValidators: true }
     );
 
     if (!pilotoAtualizado) {
-      return NextResponse.json({ error: 'Piloto não encontrado.' }, { status: 404 });
+      return NextResponse.json({ message: 'Piloto não encontrado' }, { status: 404 });
     }
 
     return NextResponse.json(pilotoAtualizado, { status: 200 });
   } catch (error: any) {
-    console.error('❌ ERRO AO ATUALIZAR PILOTO:', error);
-    return NextResponse.json(
-      { error: 'Erro interno ao atualizar o piloto.', detalhes: error.message },
-      { status: 500 }
-    );
+    return NextResponse.json({ message: error.message }, { status: 500 });
   }
 }

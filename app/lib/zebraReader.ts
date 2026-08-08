@@ -55,13 +55,13 @@ function extractTagNumber(rawEpc: string): string {
   if (cleanEpc.endsWith("000")) {
     const withoutSuffix = cleanEpc.slice(0, -3);
     
-    const match = withoutSuffix.match(/111100*(\d+?)$/);
+    const match = withoutSuffix.match(/0426D1*(\d+?)$/);
     if (match) {
       return String(Number(match[1]));
     }
   }
 
-  const numericMatch = cleanEpc.match(/0*(\d+?)0*$/);
+  const numericMatch = cleanEpc.match(/10*(\d+?)0*$/);
   if (numericMatch && numericMatch[1]) {
     return String(Number(numericMatch[1]));
   }

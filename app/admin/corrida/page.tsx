@@ -420,18 +420,17 @@ function ConteudoCronometragem() {
       }
 
       try {
-        await fetch('/api/reader/control',{
+        await fetch('/api/reader/control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'start'}),
+          body: JSON.stringify({ action: 'start' }),
         });
       } catch (err) {
         console.error("Erro ao enviar comando de start para a Zebra:", err);
       }
-
     } else {
       try {
-        await fetch('/api/reader/control',{
+        await fetch('/api/reader/control', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'stop' }),
@@ -627,17 +626,28 @@ function ConteudoCronometragem() {
       setSalvando(true);
       setCorridaAtiva(false); 
 
-      await fetch('/api/reader/control?action=stop').catch(() => {});
-
-      await fetch(`/api/bateria/${bateriaId}`, {
-        method: 'PATCH',
+      // 1. Envia o stop do leitor via POST no mesmo endpoint padronizado
+      await fetch('/api/reader/control', {
+        method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status: 'Finalizada' })
-      });
+        body: JSON.stringify({ action: 'stop' })
+      }).catch(() => {});
+
+      // 2. Atualização do status da bateria
+      try {
+        await fetch(`/api/bateria/${bateriaId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'Finalizada' })
+        });
+      } catch (e) {
+        console.warn("Aviso ao atualizar status da bateria:", e);
+      }
 
       const batteryObj = todasBaterias.find(b => String(b._id) === String(bateriaId));
       const nomeBateriaFinal = batteryObj?.nome || "BATERIA FINALIZADA";
 
+      // 3. Mapeamento higienizado dos dados do Grid
       const gridFinalMapeado = pilotos.map((p, index) => {
         const pontosGanhos = index === 0 ? 25 : index === 1 ? 22 : index === 2 ? 20 : index === 3 ? 18 : 15;
         
@@ -648,47 +658,56 @@ function ConteudoCronometragem() {
         const categoriaDoPiloto = categoriasBateria.find(c => pCatIdsLimpos.includes(String(c._id)));
 
         return {
-          pilotoId: p._id,
-          nome: p.nome,
-          numeral: p.numeral,
-          categoriaId: categoriaDoPiloto?._id || "",
+          pilotoId: String(p._id),
+          nome: String(p.nome || 'Piloto sem nome'),
+          numeral: String(p.numeral || '0'),
+          categoriaId: categoriaDoPiloto?._id ? String(categoriaDoPiloto._id) : "",
           categoriaNome: categoriaDoPiloto?.nome || "Geral",
           posicao: index + 1,
-          voltas: p.voltas || 0,
-          tempoTotalMs: p.tempoTotalMs || 0,
-          melhorVoltaMs: p.melhorVoltaMs || 0,
-          pontosGanhos: p.voltas && p.voltas > 0 ? pontosGanhos : 0,
-          historicoVoltas: p.historicoVoltas || [] 
+          voltas: Number(p.voltas) || 0,
+          tempoTotalMs: Number(p.tempoTotalMs) || 0,
+          melhorVoltaMs: Number(p.melhorVoltaMs) || 0,
+          pontosGanhos: (p.voltas && p.voltas > 0) ? pontosGanhos : 0,
+          historicoVoltas: Array.isArray(p.historicoVoltas) ? p.historicoVoltas : [] 
         };
       });
 
+      // 4. Payload com tratamento contra nulos/undefineds
+      const payload = {
+        eventoId: String(eventoId),
+        bateriaId: String(bateriaId),
+        nomeBateria: String(nomeBateriaFinal),
+        tempoTotalProvaMs: Number(tempoDecorridoMs) || 0,
+        melhorVoltaDaProvaMs: Number(tempoMelhorVoltaMs) || 0,
+        idPilotoMelhorVolta: idPilotoMelhorVolta ? String(idPilotoMelhorVolta) : null,
+        gridFinal: gridFinalMapeado
+      };
+
+      // 5. Envio dos resultados
       const resposta = await fetch('/api/resultados', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          eventoId,
-          bateriaId,
-          nomeBateria: nomeBateriaFinal,
-          tempoTotalProvaMs: tempoDecorridoMs,
-          melhorVoltaDaProvaMs: tempoMelhorVoltaMs || 0,
-          idPilotoMelhorVolta: idPilotoMelhorVolta,
-          gridFinal: gridFinalMapeado
-        })
+        body: JSON.stringify(payload)
       });
 
-      const dadosRetorno = await resposta.json();
+      const dadosRetorno = await resposta.json().catch(() => ({}));
 
       if (!resposta.ok) {
-        throw new Error(dadosRetorno.error || "Erro desconhecido ao registrar corrida.");
+        throw new Error(dadosRetorno.error || dadosRetorno.message || `Erro ${resposta.status} na API de Resultados`);
+      }
+
+      const resultadoId = dadosRetorno._id || dadosRetorno.resultadoId;
+      if (!resultadoId) {
+        throw new Error("API gravou mas não retornou o ID do resultado gerado.");
       }
 
       const urlRetorno = origem ? `&origem=${encodeURIComponent(origem)}` : '';
-      const urlRelatorio = `/admin/relatorios/${dadosRetorno.resultadoId}?novaAba=true${urlRetorno}`;
+      const urlRelatorio = `/admin/relatorios/${resultadoId}?novaAba=true${urlRetorno}`;
       
       window.open(urlRelatorio, '_blank');
 
     } catch (err: any) {
-      console.error(err);
+      console.error("Erro ao finalizar prova:", err);
       alert(`Falha ao salvar relatório: ${err.message}`);
     } finally {
       setSalvando(false);
@@ -829,12 +848,10 @@ function ConteudoCronometragem() {
                   >
                     <div className="col-span-1 text-left text-zinc-500 text-sm pl-1">{index + 1}</div>
                     
-                    {/* NOME DO PILOTO COM HOVER TOOLTIP DAS VOLTAS */}
                     <div className="col-span-2 text-left flex items-center gap-2 relative">
                       <div className={`w-[3px] h-4 ${index === 0 ? 'bg-cyan-500' : 'bg-purple-500'}`}></div>
                       <span className="text-white font-sans text-sm tracking-wide uppercase truncate">{p.nome}</span>
 
-                      {/* CARD POPUP NO HOVER */}
                       <div className={`absolute left-0 ${index === 0 ? 'top-full mt-2' : 'bottom-full mb-2'} hidden group-hover:flex flex-col bg-zinc-950 border border-zinc-800 p-3 rounded-lg shadow-2xl z-[100] min-w-[200px] pointer-events-none drop-shadow-xl`}>
                         <div className="flex items-center justify-between border-b border-zinc-800 pb-1.5 mb-2">
                           <span className="text-[11px] font-sans font-bold text-white uppercase flex items-center gap-1">
@@ -1063,7 +1080,7 @@ function ConteudoCronometragem() {
 
       </aside>
 
-      {/* MODAL DE EDÇÃO DE VOLTAS DO PILOTO (TEMPO REAL) */}
+      {/* MODAL DE EDIÇÃO DE VOLTAS DO PILOTO (TEMPO REAL) */}
       {pilotoParaEditar && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-[#0c0c0e] border border-zinc-800 rounded-2xl w-full max-w-lg overflow-hidden flex flex-col shadow-2xl">

@@ -10,7 +10,6 @@ async function conectarBanco() {
   }
 }
 
-// 🌟 ATUALIZADO: Suporta busca por ID, bateriaId (Live-Timing) ou filtro por evento
 export async function GET(request: Request) {
   try {
     await conectarBanco();
@@ -19,20 +18,30 @@ export async function GET(request: Request) {
     const id = searchParams.get('id');
     const bateriaId = searchParams.get('bateriaId');
 
-    // 1. Busca por ID específico (Ex: Tela de Relatórios)
+    // 1. Busca por ID do Resultado OU por bateriaId vindo pelo parâmetro 'id' (Tela de Relatórios)
     if (id) {
-      const resultado = await ResultadoCorrida.findById(id);
+      let resultado = null;
+
+      // Tenta buscar por _id do Resultado (caso seja um ObjectId válido)
+      if (mongoose.Types.ObjectId.isValid(id)) {
+        resultado = await ResultadoCorrida.findById(id);
+      }
+
+      // Se não encontrou por _id, tenta buscar considerando que o 'id' passado é o 'bateriaId'
+      if (!resultado) {
+        resultado = await ResultadoCorrida.findOne({ bateriaId: id });
+      }
+
       if (!resultado) {
         return NextResponse.json({ error: 'Relatório de corrida não encontrado.' }, { status: 404 });
       }
       return NextResponse.json(resultado, { status: 200 });
     }
 
-    // 2. 🚀 NOVO: Busca por bateriaId (Chamado pelo Polling de 1.5s da Tela de Corrida)
+    // 2. Busca por bateriaId direto (Chamado pelo Polling de 1.5s da Tela de Corrida)
     if (bateriaId) {
       const resultadoLive = await ResultadoCorrida.findOne({ bateriaId });
       
-      // Se a prova começou mas nenhum piloto cruzou a linha ainda, evita erro 404 na tela
       if (!resultadoLive) {
         return NextResponse.json({
           bateriaId,
@@ -58,7 +67,6 @@ export async function GET(request: Request) {
   }
 }
 
-// 🌟 ATUALIZADO: Usa findOneAndUpdate com upsert para evitar duplicidade com as antenas rfid
 export async function POST(request: Request) {
   try {
     await conectarBanco();
@@ -78,24 +86,59 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Dados insuficientes para salvar o resultado.' }, { status: 400 });
     }
 
-    // 🔄 Em vez de .create(), fazemos um "save ou update" atômico baseado na bateriaId
+    // 1. Higienização e adequação dos tipos no gridFinal
+    const gridFinalTratado = gridFinal.map((piloto: any) => {
+      const pTratado = { ...piloto };
+
+      // Se o Schema esperar historicoVoltas como objetos em vez de numbers simples:
+      if (Array.isArray(pTratado.historicoVoltas)) {
+        pTratado.historicoVoltas = pTratado.historicoVoltas.map((item: any, index: number) => {
+          if (typeof item === 'number') {
+            return { volta: index + 1, tempoMs: item }; // Converte number para Object se necessário
+          }
+          return item;
+        });
+      }
+      
+      // Limpa categoriaId vazia
+      if (!pTratado.categoriaId || pTratado.categoriaId === "") {
+        delete pTratado.categoriaId;
+      } else {
+        pTratado.categoriaId = String(pTratado.categoriaId);
+      }
+
+      if (pTratado.pilotoId) {
+        pTratado.pilotoId = String(pTratado.pilotoId);
+      }
+
+      return pTratado;
+    });
+
+    // 2. Trata o ID da melhor volta
+    const melhorVoltaPilotoId = (idPilotoMelhorVolta && mongoose.Types.ObjectId.isValid(idPilotoMelhorVolta))
+      ? String(idPilotoMelhorVolta)
+      : null;
+
+    // 3. Upsert no Resultado com returnDocument: 'after' (sem warnings)
     const resultadoConsolidado = await ResultadoCorrida.findOneAndUpdate(
-      { bateriaId },
+      { bateriaId: String(bateriaId) },
       {
         $set: {
-          eventoId,
-          nomeBateria,
-          tempoTotalProvaMs,
-          melhorVoltaDaProvaMs,
-          idPilotoMelhorVolta: idPilotoMelhorVolta || null,
-          gridFinal
+          eventoId: String(eventoId),
+          nomeBateria: String(nomeBateria),
+          tempoTotalProvaMs: Number(tempoTotalProvaMs) || 0,
+          melhorVoltaDaProvaMs: Number(melhorVoltaDaProvaMs) || 0,
+          idPilotoMelhorVolta: melhorVoltaPilotoId,
+          gridFinal: gridFinalTratado
         }
       },
-      { new: true, upsert: true } // Se já existir o live-timing criado pela antena, ele substitui/salva o final. Se não, cria do zero.
+      { returnDocument: 'after', upsert: true }
     );
 
-    // Mantém a sua regra original de fechar o status da bateria no banco
-    await Bateria.findByIdAndUpdate(bateriaId, { status: 'Finalizada' });
+    // 4. Atualiza o status da bateria
+    if (mongoose.Types.ObjectId.isValid(bateriaId)) {
+      await Bateria.findByIdAndUpdate(bateriaId, { status: 'Finalizada' });
+    }
 
     return NextResponse.json({ 
       success: true, 
@@ -104,8 +147,12 @@ export async function POST(request: Request) {
     }, { status: 201 });
 
   } catch (error: any) {
-    console.error('Erro na API ao salvar resultado:', error);
-    return NextResponse.json({ error: 'Erro interno no servidor.', detalhes: error.message }, { status: 500 });
+    console.error('Erro detalhado no POST /api/resultados:', error);
+    
+    return NextResponse.json({ 
+      error: 'Erro interno no servidor.', 
+      detalhes: error.message 
+    }, { status: 500 });
   }
 }
 
