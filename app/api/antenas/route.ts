@@ -2,40 +2,37 @@ import { NextResponse } from 'next/server';
 import { conectDB } from '@/app/lib/mongodb'; 
 import { Antena } from '@/app/model/esquemas'; 
 
-export async function POST(request: Request) {
+// 💡 Força a rota a sempre rodar no servidor em cada requisição (sem cache estático)
+export const dynamic = 'force-dynamic';
+
+export async function POST(req: Request) {
   try {
     await conectDB();
-    // Adicionamos o 'modo' que vem do formulário do painel
-    const { nome, ip, porta, modo, status } = await request.json();
+    const body = await req.json();
 
-    if (!ip || !porta) {
-      return NextResponse.json({ error: 'IP e Porta são obrigatórios.' }, { status: 400 });
-    }
+    const novaAntena = await Antena.create({
+      nome: body.nome,
+      ip: body.ip,
+      porta: body.porta || 5084,
+      modo: body.modo || 'CLIENT',
+      potenciaAntena: body.potenciaAntena ?? 30,
+      tempoRetardoMs: body.tempoRetardoMs ?? 3000,
+      status: 'desconectado',
+      ativa: false
+    });
 
-    const antenaAtualizada = await Antena.findOneAndUpdate(
-      { ip: ip.trim() },
-      { 
-        nome: nome || 'Antena Zebra FX7400', 
-        porta: Number(porta), 
-        modo: modo || 'SERVER', // Salva se o notebook é Server ou Client
-        status: status || 'desconectado' 
-      },
-      { new: true, upsert: true }
-    );
-
-    return NextResponse.json({ message: 'Salvo com sucesso!', data: antenaAtualizada });
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    return NextResponse.json({ success: true, data: novaAntena }, { status: 201 });
+  } catch (error) {
+    return NextResponse.json({ error: 'Erro ao cadastrar leitora' }, { status: 500 });
   }
 }
 
-// 💡 ADICIONE ISSO AQUI: Rota GET para listar as antenas salvas quando o painel carregar
 export async function GET() {
   try {
     await conectDB();
-    const antenas = await Antena.find({});
-    return NextResponse.json(antenas);
-  } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const antenas = await Antena.find({}).lean();
+    return NextResponse.json(antenas); // Retorna [ { _id, nome, ip, ... }, ... ]
+  } catch (error) {
+    return NextResponse.json({ error: 'Erro ao buscar antenas' }, { status: 500 });
   }
 }

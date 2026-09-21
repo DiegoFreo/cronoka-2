@@ -5,11 +5,19 @@ import { useRouter } from 'next/navigation';
 // import { useSession } from 'next-auth/react';
 import { 
   Users, Timer, Layers, Calendar, Cpu, BarChart3, ChevronRight, ArrowLeft, 
-  Settings, Zap, FileText, UserPlus, X, Edit2, RotateCcw, PlusCircle, Search, ShieldCheck 
+  Settings, Zap, FileText, UserPlus, X, Edit2, RotateCcw, PlusCircle, Search, ShieldCheck, Wifi,
+  Trash2, Key
 } from 'lucide-react';
 
 // --- INTERFACES ---
 type TipoUsuario = 'Administrador' | 'Cronometrista' | 'Secretaria';
+
+interface Usuario {
+  _id: string;
+  nameUser: string;
+  emailUser: string;
+  nivelUser: TipoUsuario;
+}
 
 interface Evento { 
   _id: string; 
@@ -17,24 +25,24 @@ interface Evento {
   data: string; 
   local: string; 
   status: string;
-  modalidadeId?: { _id: string; nome: string; } | string; 
+  modalidadeId?: { _id: string; nome: string } | string; 
 }
-interface Categoria { _id: string; nome: string; }
+interface Categoria { _id: string; nome: string }
 interface Bateria { 
   _id: string; 
   nome: string; 
   tempoProva: number; 
   voltasExtras: number; 
-  categoriaId: string[] | any;
-  categoriasIds?: string[] | any;
+  categoriaId?: (Categoria | string)[] | Categoria | string;
+  categoriasIds?: (Categoria | string)[] | Categoria | string;
 }
 interface Piloto { 
   _id: string; 
   nome: string; 
   numeral: string; 
   transponder: string; 
-  categoriasIds: string[]; 
-  eventoId: string; 
+  categoriasIds: (Categoria | string)[]; 
+  eventoId?: string; 
 }
 interface LeitoraConfig {
   _id: string;
@@ -43,7 +51,19 @@ interface LeitoraConfig {
   porta: number;
   modo: 'SERVER' | 'CLIENT';
   ativa: boolean;
-  status: 'conectado' | 'desconectado' | 'iniciada' | 'tentando';
+  status: 'conectado' | 'desconectado' | 'iniciada' | 'tentando' | 'online';
+  potenciaAntena?: number;
+  tempoRetardoMs?: number;
+}
+interface AntenaAPI {
+  _id: string;
+  nome: string;
+  ip: string;
+  porta: number;
+  modo: 'SERVER' | 'CLIENT';
+  ativa: boolean;
+  potenciaAntena?: number;
+  tempoRetardoMs?: number;
 }
 interface TagRead {
   id: string;
@@ -74,11 +94,12 @@ export default function PainelAdmin() {
   const router = useRouter();
 
   const [usuarioLogado, setUsuarioLogado] = useState<{ nome: string; role: TipoUsuario } | null>(null);
+  const [leitoraSelecionadaId, setLeitoraSelecionadaId] = useState<string | null>(null);
 
   useEffect(() => {
     async function obterUsuarioAutenticado() {
       try {
-        const res = await fetch('/api/auth/me');
+        const res = await fetch('/api/auth/me', { cache: 'no-store' });
         if (res.ok) {
           const data = await res.json();
           setUsuarioLogado({
@@ -92,7 +113,6 @@ export default function PainelAdmin() {
     }
     obterUsuarioAutenticado();
   }, []);
-  
 
   const tipoUsuario = usuarioLogado?.role || 'Administrador';
 
@@ -118,12 +138,22 @@ export default function PainelAdmin() {
   const [categorias, setCategorias] = useState<Categoria[]>([]);
   const [baterias, setBaterias] = useState<Bateria[]>([]);
   
+  // Gestão de Usuários
+  const [usuarios, setUsuarios] = useState<Usuario[]>([]);
+  const [loadingUsuario, setLoadingUsuario] = useState(false);
+  const [usuarioEmEdicao, setUsuarioEmEdicao] = useState<Usuario | null>(null);
+  const [nomeUser, setNomeUser] = useState('');
+  const [emailUser, setEmailUser] = useState('');
+  const [senhaUser, setSenhaUser] = useState('');
+  const [roleUser, setRoleUser] = useState<TipoUsuario>('Secretaria');
+  const [buscaUsuario, setBuscaUsuario] = useState('');
+
   // Listas de Pilotos Separação (Pilotos do Evento vs Todos os Pilotos)
   const [pilotosEtapa, setPilotosEtapa] = useState<Piloto[]>([]);
   const [todosPilotos, setTodosPilotos] = useState<Piloto[]>([]);
 
   // RFID SSE
-  const [leitoras, setLeitoras] = useState<LeitoraConfig[]>([]);
+  const [leitorasCadastradas, setLeitorasCadastradas] = useState<LeitoraConfig[]>([]);
   const [tags, setTags] = useState<Map<string, TagRead>>(new Map());
   const [isReading, setIsReading] = useState(false);
 
@@ -133,7 +163,7 @@ export default function PainelAdmin() {
   const [loadingBateria, setLoadingBateria] = useState(false);
   const [loadingPiloto, setLoadingPiloto] = useState(false);
 
-  // Formulários
+  // Formulários Eventos e Pilotos
   const [novaModalidadeNome, setNovaModalidadeNome] = useState('');
   const [modalidadeEvId, setModalidadeEvId] = useState('');
   const [nomeEv, setNomeEv] = useState('');
@@ -152,10 +182,13 @@ export default function PainelAdmin() {
   const [catsPilotoSelecionadas, setCatsPilotoSelecionadas] = useState<string[]>([]);
   const [pilotoEmEdicao, setPilotoEmEdicao] = useState<Piloto | null>(null);
 
+  // Formulários Hardware RFID
   const [nomeLeitora, setNomeLeitora] = useState('');
   const [ipLeitora, setIpLeitora] = useState('');
   const [portaLeitora, setPortaLeitora] = useState('5084');
   const [modoLeitora, setModoLeitora] = useState<'SERVER' | 'CLIENT'>('CLIENT');
+  const [potenciaAntena, setPotenciaAntena] = useState<number>(30);
+  const [tempoRetardoMs, setTempoRetardoMs] = useState<number>(3000);
 
   useEffect(() => {
     carregarPainelInicial();
@@ -164,10 +197,10 @@ export default function PainelAdmin() {
   const carregarPainelInicial = async () => {
     try {
       const [resEv, resMod, resAntenas, resMetricas] = await Promise.all([
-        fetch('/api/evento?status=ativos'),
-        fetch('/api/modalidade'),
-        fetch('/api/antenas'),
-        fetch('/api/admin/metricas')
+        fetch('/api/evento?status=ativos', { cache: 'no-store' }),
+        fetch('/api/modalidade', { cache: 'no-store' }),
+        fetch('/api/antenas', { cache: 'no-store' }),
+        fetch('/api/admin/metricas', { cache: 'no-store' })
       ]);
 
       if (resEv.ok) {
@@ -182,7 +215,23 @@ export default function PainelAdmin() {
       }
       if (resAntenas.ok) {
         const dados = await resAntenas.json();
-        setLeitoras(dados.map((a: any) => ({ ...a, status: 'desconectado' })));
+        const listaAntenas: AntenaAPI[] = Array.isArray(dados) 
+          ? dados 
+          : (dados.antenas || dados.data || []);
+
+        setLeitorasCadastradas(
+          listaAntenas.map((a: any) => ({ 
+            _id: a._id,
+            nome: a.nome || 'SEM NOME',
+            ip: a.ip || '0.0.0.0',
+            porta: a.porta ?? 5084,
+            modo: a.modo || 'CLIENT', // Fallback se não existir no banco
+            potenciaAntena: a.potenciaAntena ?? 30, // Fallback
+            tempoRetardoMs: a.tempoRetardoMs ?? 3000, // Fallback
+            ativa: a.status === 'online' || a.ativa === true,
+            status: (a.status === 'online' || a.ativa) ? 'conectado' : 'desconectado'
+          }))
+        );
       }
       if (resMetricas.ok) {
         const mData = await resMetricas.json();
@@ -205,10 +254,24 @@ export default function PainelAdmin() {
     }
   };
 
+  const carregarUsuarios = async () => {
+    try {
+      const res = await fetch('/api/usuarios', { cache: 'no-store' });
+      if (res.ok) {
+        const dados = await res.json();
+        setUsuarios(dados || []);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar usuários:", err);
+    }
+  };
+
   const alternarAba = (aba: typeof activeTab) => {
     setActiveTab(aba);
     if (aba === 'pilotos') {
       carregarTodosPilotos();
+    } else if (aba === 'usuarios') {
+      carregarUsuarios();
     }
   };
 
@@ -248,7 +311,7 @@ export default function PainelAdmin() {
       await fetch('/api/reader/control', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: start ? 'start' : 'stop' }),
+        body: JSON.stringify({ action: start ? 'start' : 'stop', leitoraId: leitoraSelecionadaId }),
       });
       setIsReading(start);
     } catch (err) {
@@ -341,7 +404,7 @@ export default function PainelAdmin() {
     setNomePiloto(piloto.nome);
     setNumeralPiloto(piloto.numeral);
     setTransponderPiloto(piloto.transponder || '');
-    const catsIds = (piloto.categoriasIds || []).map(cat => typeof cat === 'object' ? (cat as any)._id : cat);
+    const catsIds = (piloto.categoriasIds || []).map(cat => typeof cat === 'object' ? cat._id : cat);
     setCatsPilotoSelecionadas(catsIds);
   };
 
@@ -353,72 +416,67 @@ export default function PainelAdmin() {
     setPilotoEmEdicao(null);
   };
 
- const vincularPilotoAoEvento = async (piloto: Piloto) => {
-  if (!eventoAtivo?._id) {
-    alert("Nenhum evento ativo selecionado.");
-    return;
-  }
-
-  // 1. Extrai APENAS as strings de IDs, descartando objetos populados
-  const extrairStringId = (item: any): string => {
-    if (!item) return '';
-    if (typeof item === 'string') return item;
-    if (typeof item === 'object' && item._id) return String(item._id);
-    return String(item);
-  };
-
-  const categoriasExistentes = (piloto.categoriasIds || [])
-    .map(extrairStringId)
-    .filter(Boolean);
-
-  let categoriasParaVincular: string[] = [];
-
-  if (catsPilotoSelecionadas.length > 0) {
-    categoriasParaVincular = catsPilotoSelecionadas.map(extrairStringId);
-  } else if (categoriasExistentes.length > 0) {
-    categoriasParaVincular = categoriasExistentes;
-  } else if (categorias.length > 0) {
-    categoriasParaVincular = categorias.map(c => extrairStringId(c._id));
-  }
-
-  // 2. Monta um payload limpo sem metadados
-  const payload = {
-    _id: piloto._id,
-    nome: piloto.nome,
-    numeral: piloto.numeral,
-    transponder: piloto.transponder || '',
-    categoriasIds: categoriasParaVincular,
-    eventoId: String(eventoAtivo._id)
-  };
-
-  setLoadingPiloto(true);
-
-  try {
-    // Teste enviando tanto query param quanto id no body para garantir compatibilidade com a rota
-    const res = await fetch(`/api/piloto?id=${piloto._id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-
-    const resData = await res.json().catch(() => ({}));
-
-    if (res.ok) {
-      // Recarrega os dados atualizados do servidor
-      await entrarNoEvento(eventoAtivo);
-      await carregarTodosPilotos();
-      limparFormularioPiloto();
-    } else {
-      console.error("Erro retornado pela API:", resData);
-      alert(`Erro ${res.status}: ${resData.message || resData.error || 'Falha ao vincular no banco.'}`);
+  const vincularPilotoAoEvento = async (piloto: Piloto) => {
+    if (!eventoAtivo?._id) {
+      alert("Nenhum evento ativo selecionado.");
+      return;
     }
-  } catch (err) {
-    console.error("Erro na requisição de vínculo:", err);
-    alert("Falha de rede ao tentar vincular o piloto.");
-  } finally {
+
+    const extrairStringId = (item: Categoria | string | null | undefined): string => {
+      if (!item) return '';
+      if (typeof item === 'string') return item;
+      if (typeof item === 'object' && item._id) return String(item._id);
+      return String(item);
+    };
+
+    const categoriasExistentes = (piloto.categoriasIds || [])
+      .map(extrairStringId)
+      .filter(Boolean);
+
+    let categoriasParaVincular: string[] = [];
+
+    if (catsPilotoSelecionadas.length > 0) {
+      categoriasParaVincular = catsPilotoSelecionadas.map(extrairStringId);
+    } else if (categoriasExistentes.length > 0) {
+      categoriasParaVincular = categoriasExistentes;
+    } else if (categorias.length > 0) {
+      categoriasParaVincular = categorias.map(c => extrairStringId(c._id));
+    }
+
+    const payload = {
+      _id: piloto._id,
+      nome: piloto.nome,
+      numeral: piloto.numeral,
+      transponder: piloto.transponder || '',
+      categoriasIds: categoriasParaVincular,
+      eventoId: String(eventoAtivo._id)
+    };
+
+    setLoadingPiloto(true);
+
+    try {
+      const res = await fetch(`/api/piloto?id=${piloto._id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const resData = await res.json().catch(() => ({}));
+
+      if (res.ok) {
+        await entrarNoEvento(eventoAtivo);
+        await carregarTodosPilotos();
+        limparFormularioPiloto();
+      } else {
+        console.error("Erro retornado pela API:", resData);
+        alert(`Erro ${res.status}: ${resData.message || resData.error || 'Falha ao vincular no banco.'}`);
+      }
+    } catch (err) {
+      console.error("Erro na requisição de vínculo:", err);
+      alert("Falha de rede ao tentar vincular o piloto.");
+    }
     setLoadingPiloto(false);
-  }
-};
+  };
 
   const handleCriarOuAtualizarPiloto = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -469,21 +527,118 @@ export default function PainelAdmin() {
           nome: nomeLeitora.toUpperCase(),
           ip: ipLeitora.trim(),
           porta: Number(portaLeitora),
-          modo: modoLeitora
+          modo: modoLeitora,
+          potenciaAntena: Number(potenciaAntena),
+          tempoRetardoMs: Number(tempoRetardoMs)
         })
       });
 
       if (res.ok) {
-        const data = await res.json();
-        setLeitoras(prev => [...prev, { ...data.data, status: 'desconectado' }]);
-        setNomeLeitora(''); setIpLeitora('');
+        const resposta = await res.json();
+        const novaAntena = resposta.data || resposta;
+
+        setLeitorasCadastradas(prev => [
+          ...prev, 
+          { ...novaAntena, status: 'desconectado' }
+        ]);
+        
+        setNomeLeitora(''); 
+        setIpLeitora('');
+        setPortaLeitora('5084');
+        setModoLeitora('CLIENT');
+        setPotenciaAntena(30);
+        setTempoRetardoMs(3000);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { 
+      console.error("Erro ao salvar leitora:", err); 
+    }
   };
 
-  const obterNomesCategorias = (ids: any[]) => {
+  // HANDLERS DE USUÁRIOS
+  const limparFormularioUsuario = () => {
+    setNomeUser('');
+    setEmailUser('');
+    setSenhaUser('');
+    setRoleUser('Secretaria');
+    setUsuarioEmEdicao(null);
+  };
+
+  const iniciarEdicaoUsuario = (usr: Usuario) => {
+    setUsuarioEmEdicao(usr);
+    setNomeUser(usr.nameUser);
+    setEmailUser(usr.emailUser);
+    setRoleUser(usr.nivelUser);
+    setSenhaUser(''); // Deixa a senha em branco por padrão
+  };
+
+  const handleCriarOuAtualizarUsuario = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!nomeUser.trim() || !emailUser.trim()) return;
+
+    if (!usuarioEmEdicao && !senhaUser) {
+      alert("A senha é obrigatória para novos cadastros.");
+      return;
+    }
+
+    setLoadingUsuario(true);
+    try {
+      const payload: any = {
+        nome: nomeUser,
+        email: emailUser,
+        role: roleUser
+      };
+
+      if (senhaUser.trim()) {
+        payload.senha = senhaUser;
+      }
+
+      const res = await fetch(usuarioEmEdicao ? `/api/usuarios?id=${usuarioEmEdicao._id}` : '/api/usuarios', {
+        method: usuarioEmEdicao ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (res.ok) {
+        limparFormularioUsuario();
+        await carregarUsuarios();
+      } else {
+        const errData = await res.json().catch(() => ({}));
+        alert(`Erro ao salvar usuário: ${errData.message || 'Falha na requisição'}`);
+      }
+    } catch (err) {
+      console.error("Erro ao salvar usuário:", err);
+    }
+    setLoadingUsuario(false);
+  };
+
+  const handleExcluirUsuario = async (id: string) => {
+    if (!confirm("Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.")) return;
+
+    try {
+      const res = await fetch(`/api/usuarios?id=${id}`, {
+        method: 'DELETE'
+      });
+
+      if (res.ok) {
+        if (usuarioEmEdicao?._id === id) {
+          limparFormularioUsuario();
+        }
+        await carregarUsuarios();
+      } else {
+        alert("Erro ao excluir o usuário.");
+      }
+    } catch (err) {
+      console.error("Erro ao excluir usuário:", err);
+    }
+  };
+
+  const obterNomesCategorias = (ids?: (Categoria | string)[] | Categoria | string) => {
     if (!ids) return '';
-    return ids.map(cat => (typeof cat === 'object' ? cat.nome : categorias.find(c => c._id === cat)?.nome)).filter(Boolean).join(', ');
+    const arrayIds = Array.isArray(ids) ? ids : [ids];
+    return arrayIds
+      .map(cat => (typeof cat === 'object' ? cat.nome : categorias.find(c => c._id === cat)?.nome))
+      .filter(Boolean)
+      .join(', ');
   };
 
   const tagList = Array.from(tags.values()).sort((a, b) => b.timestamp.localeCompare(a.timestamp));
@@ -494,7 +649,7 @@ export default function PainelAdmin() {
   const podeAcessarConfiguracoes = tipoUsuario === 'Administrador' || tipoUsuario === 'Cronometrista';
   const podeAcessarUsuarios = tipoUsuario === 'Administrador';
 
-  // Lista dinamicamente alternada: Se na aba geral 'pilotos' usa todosPilotos, senão usa pilotosEtapa
+  // Lista dinamicamente alternada
   const listaExibicaoPilotos = activeTab === 'pilotos' ? todosPilotos : pilotosEtapa;
 
   const pilotosFiltrados = listaExibicaoPilotos.filter(p => 
@@ -503,7 +658,12 @@ export default function PainelAdmin() {
     p.transponder?.toLowerCase().includes(buscaPiloto.toLowerCase())
   );
 
-  // Carrega a base geral de pilotos automaticamente ao abrir o modal
+  const usuariosFiltrados = usuarios.filter(u =>
+    u.nameUser.toLowerCase().includes(buscaUsuario.toLowerCase()) ||
+    u.emailUser.toLowerCase().includes(buscaUsuario.toLowerCase()) ||
+    u.nivelUser.toLowerCase().includes(buscaUsuario.toLowerCase())
+  );
+
   useEffect(() => {
     if (modalPilotosAberto) {
       carregarTodosPilotos();
@@ -655,7 +815,7 @@ export default function PainelAdmin() {
                         <div key={ev._id} onClick={() => entrarNoEvento(ev)} className="bg-[#0c0c0e] border border-zinc-900 p-4 rounded-xl flex justify-between items-center hover:border-zinc-700 cursor-pointer transition-all group">
                           <div className="space-y-1">
                             <span className="text-[9px] font-mono bg-black text-red-500 border border-zinc-800 px-1.5 py-0.5 rounded font-bold uppercase">
-                              {typeof ev.modalidadeId === 'object' ? (ev.modalidadeId as any)?.nome : 'GRID'}
+                              {typeof ev.modalidadeId === 'object' && ev.modalidadeId ? ev.modalidadeId.nome : 'GRID'}
                             </span>
                             <h3 className="text-sm font-black text-white uppercase">{ev.nome}</h3>
                             <p className="text-xs text-zinc-500 font-mono">{ev.local} — {new Date(ev.data).toLocaleDateString('pt-BR')}</p>
@@ -887,41 +1047,188 @@ export default function PainelAdmin() {
           <div className="max-w-7xl mx-auto space-y-6">
             <div>
               <h1 className="text-2xl font-black uppercase text-white">Engenharia de Hardware & RFID</h1>
-              <p className="text-xs text-zinc-500 font-mono">Gerenciador de Antenas IP e Monitoramento SSE.</p>
+              <p className="text-xs text-zinc-500 font-mono">Gerenciador de Antenas IP, Parâmetros e Monitoramento SSE.</p>
             </div>
 
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              {/* COLUNA ESQUERDA: CADASTRO E LISTA DE LEITORAS */}
               <div className="space-y-6">
+                {/* Formulário de Cadastro */}
                 <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
-                  <h2 className="text-xs font-black uppercase text-white flex items-center gap-2"><Cpu size={15} className="text-red-500" /> Nova Antena IP</h2>
+                  <h2 className="text-xs font-black uppercase text-white flex items-center gap-2">
+                    <Cpu size={15} className="text-red-500" /> Nova Antena IP
+                  </h2>
                   <form onSubmit={handleSalvarLeitora} className="space-y-3 font-mono text-xs">
-                    <input type="text" placeholder="Nome Identificador" value={nomeLeitora} onChange={e => setNomeLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white uppercase outline-none" required />
-                    <input type="text" placeholder="IP (EX: 192.168.1.121)" value={ipLeitora} onChange={e => setIpLeitora(e.target.value)} className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none" required />
-                    <button type="submit" className="w-full bg-red-600 hover:bg-red-700 font-black py-2.5 rounded text-[11px] uppercase text-white">
+                    <div>
+                      <label className="text-[10px] text-zinc-500 uppercase block mb-1">Nome da Leitora</label>
+                      <input 
+                        type="text" 
+                        placeholder="Ex: Leitora Linha Chegada" 
+                        value={nomeLeitora} 
+                        onChange={e => setNomeLeitora(e.target.value)} 
+                        className="w-full bg-black border border-zinc-800 rounded p-2 text-white uppercase outline-none focus:border-red-600" 
+                        required 
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="col-span-2">
+                        <label className="text-[10px] text-zinc-500 uppercase block mb-1">Endereço IP</label>
+                        <input 
+                          type="text" 
+                          placeholder="192.168.1.121" 
+                          value={ipLeitora} 
+                          onChange={e => setIpLeitora(e.target.value)} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600" 
+                          required 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 uppercase block mb-1">Porta</label>
+                        <input 
+                          type="text" 
+                          value={portaLeitora} 
+                          onChange={e => setPortaLeitora(e.target.value)} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600" 
+                          required 
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-3 gap-2">
+                      <div>
+                        <label className="text-[10px] text-zinc-500 uppercase block mb-1">Modo</label>
+                        <select 
+                          value={modoLeitora} 
+                          onChange={e => setModoLeitora(e.target.value as 'SERVER' | 'CLIENT')} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600"
+                        >
+                          <option value="CLIENT">CLIENT</option>
+                          <option value="SERVER">SERVER</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 uppercase block mb-1">Potência (dBm)</label>
+                        <input 
+                          type="number" 
+                          min="10" 
+                          max="30" 
+                          value={potenciaAntena} 
+                          onChange={e => setPotenciaAntena(Number(e.target.value))} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600" 
+                        />
+                      </div>
+                      <div>
+                        <label className="text-[10px] text-zinc-500 uppercase block mb-1">Retardo (ms)</label>
+                        <input 
+                          type="number" 
+                          step="500" 
+                          value={tempoRetardoMs} 
+                          onChange={e => setTempoRetardoMs(Number(e.target.value))} 
+                          className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600" 
+                        />
+                      </div>
+                    </div>
+
+                    <button type="submit" className="w-full bg-red-600 hover:bg-red-700 font-black py-2.5 rounded text-[11px] uppercase text-white transition-colors">
                       Salvar Hardware
                     </button>
                   </form>
                 </div>
+
+                {/* Lista de Leitoras Cadastradas */}
+                <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4">
+                  <h2 className="text-xs font-black uppercase text-white flex justify-between items-center">
+                    <span>Leitoras Cadastradas ({(leitorasCadastradas ?? []).length})</span>
+                    <Wifi size={14} className="text-zinc-500" />
+                  </h2>
+
+                  <div className="space-y-2 font-mono text-xs max-h-[350px] overflow-y-auto pr-1">
+                    {(leitorasCadastradas ?? []).length === 0 ? (
+                      <div className="text-zinc-600 text-center py-4 text-[11px] italic">Nenhuma leitora cadastrada.</div>
+                    ) : (
+                      (leitorasCadastradas ?? []).map((leitora) => {
+                        const isSelecionada = leitoraSelecionadaId === leitora._id;
+                        return (
+                          <div 
+                            key={leitora._id}
+                            onClick={() => setLeitoraSelecionadaId(leitora._id)}
+                            className={`p-3 rounded-lg border transition-all cursor-pointer ${
+                              isSelecionada 
+                                ? 'bg-red-950/20 border-red-600/60 text-white' 
+                                : 'bg-black/50 border-zinc-900 text-zinc-400 hover:border-zinc-800'
+                            }`}
+                          >
+                            <div className="flex justify-between items-center mb-1">
+                              <span className="font-bold uppercase text-white flex items-center gap-1.5">
+                                <span className={`w-2 h-2 rounded-full ${leitora.status === 'conectado' || leitora.status === 'online' ? 'bg-emerald-500' : 'bg-red-500'}`}></span>
+                                {leitora.nome}
+                              </span>
+                              {isSelecionada && (
+                                <span className="text-[9px] bg-red-600 text-white font-bold px-1.5 py-0.5 rounded uppercase">Ativa</span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-zinc-500 space-y-1">
+                              <div className="flex justify-between">
+                                <span>IP: <strong className="text-zinc-300">{leitora.ip}:{leitora.porta ?? 5084}</strong></span>
+                                <span>Modo: <strong className="text-zinc-300">{leitora.modo ?? 'CLIENT'}</strong></span>
+                              </div>
+                              <div className="flex justify-between text-[9px] text-zinc-600">
+                                <span>Potência: <strong className="text-zinc-400">{leitora.potenciaAntena ?? 30} dBm</strong></span>
+                                <span>Retardo: <strong className="text-zinc-400">{leitora.tempoRetardoMs ?? 3000} ms</strong></span>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
               </div>
 
+              {/* COLUNA DIREITA: CONTROLE DE EXECUÇÃO & BUFFER DE TAGS */}
               <div className="lg:col-span-2 space-y-6">
+                {/* Painel do Barramento */}
                 <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
-                  <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase flex justify-between items-center">
-                    <span>Barramento do Leitor RFID</span>
+                  <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase flex flex-wrap justify-between items-center gap-3">
+                    <div className="flex items-center gap-2">
+                      <span>Seletor de Operação:</span>
+                      <select 
+                        value={leitoraSelecionadaId ?? ''} 
+                        onChange={e => setLeitoraSelecionadaId(e.target.value || null)}
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-white font-bold text-xs uppercase outline-none focus:border-red-600"
+                      >
+                        <option value="">-- Selecione uma Leitora --</option>
+                        {(leitorasCadastradas ?? []).map(l => (
+                          <option key={l._id} value={l._id}>{l.nome} ({l.ip})</option>
+                        ))}
+                      </select>
+                    </div>
+
                     <button
                       onClick={() => toggleReading(!isReading)}
-                      className={`px-6 py-2 rounded-md font-semibold text-white transition-colors ${
+                      disabled={!leitoraSelecionadaId}
+                      className={`px-6 py-2 rounded-md font-semibold text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${
                         isReading ? 'bg-red-600 hover:bg-red-700' : 'bg-green-600 hover:bg-green-700'
                       }`}
                     >
-                      {isReading ? 'Parar Leitora' : 'Iniciar Leitura'}
+                      {isReading ? 'Parar Leitora' : 'Conectar Leitora'}
                     </button>
                   </div>
-                  <div className="p-4 font-mono text-xs text-zinc-400">
-                    Status do Stream de Antenas: <span className={isReading ? "text-emerald-400 font-bold" : "text-red-500 font-bold"}>{isReading ? "CONECTADO E LENDO (LIVE)" : "STANDBY (PARADO)"}</span>
+
+                  <div className="p-4 font-mono text-xs text-zinc-400 flex justify-between items-center">
+                    <div>
+                      Status do Stream: <span className={isReading ? "text-emerald-400 font-bold" : "text-red-500 font-bold"}>{isReading ? "CONECTADO E LENDO (LIVE)" : "STANDBY (PARADO)"}</span>
+                    </div>
+                    {leitoraSelecionadaId && (
+                      <div className="text-[11px] text-zinc-500">
+                        Leitora Ativa ID: <strong className="text-zinc-300">{leitoraSelecionadaId}</strong>
+                      </div>
+                    )}
                   </div>
                 </div>
 
+                {/* Console RFID */}
                 <div className="bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden">
                   <div className="p-4 border-b border-zinc-900 bg-black/20 text-xs font-mono font-bold text-zinc-500 uppercase flex justify-between items-center">
                     <span>Console RFID — Tags em Tempo Real ({tagList.length})</span>
@@ -955,12 +1262,164 @@ export default function PainelAdmin() {
         {/* ABA USUÁRIOS */}
         {activeTab === 'usuarios' && podeAcessarUsuarios && (
           <div className="max-w-7xl mx-auto space-y-6">
-            <div>
-              <h1 className="text-2xl font-black uppercase text-white">Controle de Usuários e Acessos</h1>
-              <p className="text-xs text-zinc-500 font-mono">Gerenciamento de credenciais e privilégios da plataforma (Área Restrita do Administrador).</p>
+            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h1 className="text-2xl font-black uppercase text-white">Controle de Usuários e Acessos</h1>
+                <p className="text-xs text-zinc-500 font-mono">Gerenciamento de credenciais e privilégios da plataforma (Área Restrita do Administrador).</p>
+              </div>
+
+              <div className="relative flex-1 md:w-64">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500" />
+                <input 
+                  type="text" 
+                  placeholder="Buscar usuário..." 
+                  value={buscaUsuario}
+                  onChange={(e) => setBuscaUsuario(e.target.value)}
+                  className="w-full bg-black border border-zinc-800 rounded-lg pl-9 pr-3 py-2 text-xs text-white outline-none font-mono"
+                />
+              </div>
             </div>
-            <div className="bg-[#0c0c0e] border border-zinc-900 p-8 rounded-xl text-center font-mono text-xs text-zinc-500">
-              Módulo de gerenciamento de usuários operacionais pronto para integração de banco de dados.
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
+              {/* FORMULÁRIO DE CADASTRO / EDIÇÃO DE USUÁRIO */}
+              <div className="bg-[#0c0c0e] border border-zinc-900 p-5 rounded-xl space-y-4 font-mono">
+                <div className="flex justify-between items-center border-b border-zinc-900 pb-3">
+                  <h2 className="text-xs font-black uppercase text-white flex items-center gap-2">
+                    {usuarioEmEdicao ? <Edit2 size={15} className="text-amber-500" /> : <UserPlus size={15} className="text-red-500" />}
+                    {usuarioEmEdicao ? 'Editar Usuário' : 'Novo Usuário'}
+                  </h2>
+                  {usuarioEmEdicao && (
+                    <button 
+                      onClick={limparFormularioUsuario}
+                      className="text-[10px] text-amber-500 hover:underline flex items-center gap-1 uppercase"
+                    >
+                      <RotateCcw size={10} /> Cancelar
+                    </button>
+                  )}
+                </div>
+
+                <form onSubmit={handleCriarOuAtualizarUsuario} className="space-y-3 text-xs">
+                  <div>
+                    <label className="text-[10px] text-zinc-500 uppercase block mb-1">Nome Completo</label>
+                    <input 
+                      type="text" 
+                      placeholder="EX: JOÃO SILVA" 
+                      value={nomeUser} 
+                      onChange={e => setNomeUser(e.target.value)} 
+                      className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600 uppercase" 
+                      required 
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-zinc-500 uppercase block mb-1">E-mail de Acesso</label>
+                    <input 
+                      type="email" 
+                      placeholder="usuario@email.com" 
+                      value={emailUser} 
+                      onChange={e => setEmailUser(e.target.value)} 
+                      className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600" 
+                      required 
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-zinc-500 uppercase block mb-1">
+                      {usuarioEmEdicao ? 'Senha (deixe em branco para manter)' : 'Senha de Acesso'}
+                    </label>
+                    <div className="relative">
+                      <Key size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-zinc-600" />
+                      <input 
+                        type="password" 
+                        placeholder="••••••••" 
+                        value={senhaUser} 
+                        onChange={e => setSenhaUser(e.target.value)} 
+                        className="w-full bg-black border border-zinc-800 rounded pl-8 p-2 text-white outline-none focus:border-red-600" 
+                        required={!usuarioEmEdicao}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-[10px] text-zinc-500 uppercase block mb-1">Nível de Permissão</label>
+                    <select 
+                      value={roleUser} 
+                      onChange={e => setRoleUser(e.target.value as TipoUsuario)} 
+                      className="w-full bg-black border border-zinc-800 rounded p-2 text-white outline-none focus:border-red-600 uppercase"
+                    >
+                      <option value="Administrador">Administrador</option>
+                      <option value="Cronometrista">Cronometrista</option>
+                      <option value="Secretaria">Secretaria</option>
+                    </select>
+                  </div>
+
+                  <button 
+                    type="submit" 
+                    disabled={loadingUsuario}
+                    className={`w-full font-black py-2.5 rounded text-[11px] uppercase text-white transition-colors mt-2 ${
+                      usuarioEmEdicao ? 'bg-amber-600 hover:bg-amber-700' : 'bg-red-600 hover:bg-red-700'
+                    }`}
+                  >
+                    {loadingUsuario ? "PROCESSANDO..." : usuarioEmEdicao ? "Atualizar Usuário" : "Cadastrar Usuário"}
+                  </button>
+                </form>
+              </div>
+
+              {/* LISTA DE USUÁRIOS */}
+              <div className="lg:col-span-2 bg-[#0c0c0e] border border-zinc-900 rounded-xl overflow-hidden font-mono">
+                <div className="p-4 border-b border-zinc-900 bg-black/40 flex justify-between items-center text-xs font-bold text-zinc-400 uppercase">
+                  <span>Usuário / E-mail</span>
+                  <span>Permissão</span>
+                  <span className="text-right">Ações</span>
+                </div>
+
+                <div className="divide-y divide-zinc-900/60">
+                  {usuariosFiltrados.length === 0 ? (
+                    <div className="p-12 text-center text-zinc-600 text-xs italic">
+                      Nenhum usuário cadastrado ou localizado.
+                    </div>
+                  ) : (
+                    usuariosFiltrados.map(usr => (
+                      <div key={usr._id} className="p-4 text-xs grid grid-cols-1 md:grid-cols-3 items-center gap-4 hover:bg-zinc-900/30 transition-colors">
+                        <div>
+                          <p className="text-white font-black uppercase">{usr.nameUser}</p>
+                          <p className="text-zinc-500 text-[11px]">{usr.emailUser}</p>
+                        </div>
+
+                        <div>
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-bold uppercase border ${
+                            usr.nivelUser === 'Administrador' 
+                              ? 'bg-red-950/30 border-red-900/50 text-red-400' 
+                              : usr.nivelUser === 'Cronometrista'
+                              ? 'bg-amber-950/30 border-amber-900/50 text-amber-400'
+                              : 'bg-blue-950/30 border-blue-900/50 text-blue-400'
+                          }`}>
+                            {usr.nivelUser}
+                          </span>
+                        </div>
+
+                        <div className="flex items-center justify-end gap-2">
+                          <button
+                            type="button"
+                            onClick={() => iniciarEdicaoUsuario(usr)}
+                            className="p-1.5 bg-zinc-900 hover:bg-amber-600/20 hover:text-amber-400 border border-zinc-800 text-zinc-400 rounded transition-colors text-[10px] font-bold uppercase flex items-center gap-1"
+                          >
+                            <Edit2 size={12} /> Editar
+                          </button>
+
+                          <button
+                            type="button"
+                            onClick={() => handleExcluirUsuario(usr._id)}
+                            className="p-1.5 bg-zinc-900 hover:bg-red-600/20 hover:text-red-400 border border-zinc-800 text-zinc-400 rounded transition-colors text-[10px] font-bold uppercase flex items-center gap-1"
+                          >
+                            <Trash2 size={12} /> Excluir
+                          </button>
+                        </div>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -1100,20 +1559,18 @@ export default function PainelAdmin() {
 
                     <div className="divide-y divide-zinc-900/60 overflow-y-auto flex-1">
                       {(() => {
-                        // 1. Filtra pela busca
                         const filtrados = todosPilotos.filter(p => 
                           p.nome.toLowerCase().includes(buscaPiloto.toLowerCase()) || 
                           p.numeral.includes(buscaPiloto)
                         );
 
-                        // 2. Ordena: quem está no evento fica no TOPO
                         const ordenados = [...filtrados].sort((a, b) => {
                           const aNoEvento = a.eventoId === eventoAtivo?._id || pilotosEtapa.some(pe => pe._id === a._id);
                           const bNoEvento = b.eventoId === eventoAtivo?._id || pilotosEtapa.some(pe => pe._id === b._id);
 
-                          if (aNoEvento && !bNoEvento) return -1; // 'a' sobe
-                          if (!aNoEvento && bNoEvento) return 1;  // 'b' sobe
-                          return a.nome.localeCompare(b.nome);     // desempata por ordem alfabética
+                          if (aNoEvento && !bNoEvento) return -1;
+                          if (!aNoEvento && bNoEvento) return 1;
+                          return a.nome.localeCompare(b.nome);
                         });
 
                         if (ordenados.length === 0) {

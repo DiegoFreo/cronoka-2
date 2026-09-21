@@ -1,21 +1,63 @@
 import { NextRequest, NextResponse } from "next/server";
 import conectDB from '@/app/lib/mongodb';
 import { Usuario } from '@/app/model/esquemas';
-import mongoose, { models, model, Schema } from 'mongoose';
 
-/* 1. Definição do Schema respeitando exatamente a sua tabela existente
-const UsuarioSchema = new Schema({
-  emailUser: { type: String, required: true, unique: true },
-  passwordUser: { type: String, required: true },
-  nivelUser: { type: String, enum: ['A', 'C', 'S'], required: true }, // A = Admin, C = Cronometrista, S = Secretaria
-  avatarUser: { type: String, default: '' }
-}, { 
-  collection: 'usuarios' // 🌟 Força o Mongoose a usar exatamente o nome da sua tabela
-});
+/**
+ * Método GET: Valida a sessão ativa do usuário através do cookie
+ * e retorna seus dados de perfil/permissões atualizados.
+ */
+export async function GET(request: NextRequest) {
+  try {
+    // 1. Obtém o token salvo nos cookies da requisição
+    const sessionToken = request.cookies.get('sc-session-token')?.value;
 
-// Garante que o modelo não seja recriado se já existir em cache
-const UsuarioModel = models.Usuario || model('Usuario', UsuarioSchema);
-*/
+    if (!sessionToken || !sessionToken.startsWith('tk_sc_')) {
+      return NextResponse.json(
+        { authenticated: false, error: "Sessão não encontrada ou inválida." },
+        { status: 401 }
+      );
+    }
+
+    // 2. Extrai o ID do usuário contido no token (remove o prefixo 'tk_sc_')
+    const userId = sessionToken.replace('tk_sc_', '');
+
+    // 3. Conecta ao banco e busca os dados do usuário
+    await conectDB();
+    const user = await Usuario.findById(userId).select('-passwordUser').lean();
+
+    if (!user) {
+      return NextResponse.json(
+        { authenticated: false, error: "Usuário não localizado." },
+        { status: 404 }
+      );
+    }
+
+    // 4. Mapeia o nível de acesso (Role)
+    let sistemaRole = '';
+    if (user.nivelUser === 'A') sistemaRole = 'admin';
+    else if (user.nivelUser === 'C') sistemaRole = 'cronometrista';
+    else if (user.nivelUser === 'S') sistemaRole = 'secretaria';
+
+    // 5. Retorna as informações do usuário autenticado
+    return NextResponse.json({
+      authenticated: true,
+      user: {
+        idUser: user._id,
+        emailUser: user.emailUser,
+        role: sistemaRole,
+        avatar: user.avatarUser || null,
+        eventosPermitidos: user.eventosPermitidos || []
+      }
+    }, { status: 200 });
+
+  } catch (error: any) {
+    console.error("❌ ERRO AO VERIFICAR AUTENTICAÇÃO (GET):", error);
+    return NextResponse.json(
+      { authenticated: false, error: error.message },
+      { status: 500 }
+    );
+  }
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -42,13 +84,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Nível de usuário não reconhecido pelo sistema." }, { status: 403 });
     }
 
-    // 🌟 Monta o payload de resposta incluindo os eventos permitidos
+    // Monta o payload de resposta incluindo os eventos permitidos
     const response = NextResponse.json({ 
       success: true, 
       role: sistemaRole, 
       avatar: user.avatarUser || null,
       idUser: user._id,
-      eventosPermitidos: user.eventosPermitidos || [] // Envia a lista para o front se planejar usar no estado global
+      eventosPermitidos: user.eventosPermitidos || []
     }, { status: 200 });
 
     const tempoSessao = 60 * 60 * 12; // 12 horas de sessão ativa
